@@ -523,6 +523,33 @@ export default function ThemeCustomizer({
                 <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
               </label>
             </div>
+
+            {/* Admin PIN Code Configuration */}
+            <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30">
+              <div className="flex items-center justify-between mb-2">
+                <div>
+                  <p className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                    <span>🔒</span> رمز دخول الأدمن (PIN Code)
+                  </p>
+                  <p className="text-[11px] text-slate-400">
+                    الرمز السري الخاص بك كأدمن للتحكم بالسحب وإدارة الإعدادات والمشاركين
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 mt-2">
+                <input
+                  type="text"
+                  maxLength={12}
+                  value={formData.adminPin || '1234'}
+                  onChange={(e) => setFormData({ ...formData, adminPin: e.target.value.trim() })}
+                  className="bg-slate-900 border border-amber-500/50 rounded-xl px-3 py-2 text-sm font-mono font-bold text-amber-300 w-36 tracking-widest text-center focus:outline-none focus:ring-2 focus:ring-amber-400"
+                  placeholder="1234"
+                />
+                <span className="text-[11px] text-slate-400">
+                  (الافتراضي: 1234 - يمكنك تغييره لأي رقم أو كلمة سر)
+                </span>
+              </div>
+            </div>
           </div>
         </div>
       </div>

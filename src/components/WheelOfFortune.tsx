@@ -7,8 +7,6 @@ import {
   CheckCircle2,
   UserCheck,
   Sparkles,
-  Volume2,
-  VolumeX,
   Eye,
   EyeOff,
   ShieldAlert,
@@ -20,9 +18,9 @@ import {
   Minimize2,
   Tv,
   Zap,
+  Lock,
 } from 'lucide-react';
 import { Participant, Prize, StoreTheme } from '../types';
-import { playTickSound, playWinnerFanfare } from '../utils/audio';
 import { downloadWinnerCertificate } from '../utils/winnerCard';
 import DigitalLuckyDraw from './DigitalLuckyDraw';
 import R3DLogo from './R3DLogo';
@@ -32,6 +30,8 @@ interface WheelOfFortuneProps {
   prizes: Prize[];
   theme: StoreTheme;
   maskPhone: boolean;
+  isAdmin?: boolean;
+  onRequestAdminLogin?: () => void;
   onWinnerDrawn: (participantId: string, prizeTitle: string) => Promise<void>;
   onSeedSample: () => Promise<void>;
 }
@@ -41,6 +41,8 @@ export default function WheelOfFortune({
   prizes,
   theme,
   maskPhone,
+  isAdmin = false,
+  onRequestAdminLogin,
   onWinnerDrawn,
   onSeedSample,
 }: WheelOfFortuneProps) {
@@ -49,7 +51,6 @@ export default function WheelOfFortune({
   const [isLiveStage, setIsLiveStage] = useState(false);
   const [isSpinning, setIsSpinning] = useState(false);
   const rotationAngleRef = useRef(0);
-  const [soundEnabled, setSoundEnabled] = useState(true);
   const [onlyNonWinners, setOnlyNonWinners] = useState(true);
   const [selectedPrizeId, setSelectedPrizeId] = useState<string>(prizes[0]?.id || '');
   const [currentWinner, setCurrentWinner] = useState<Participant | null>(null);
@@ -270,13 +271,13 @@ export default function WheelOfFortune({
     const desiredSliceCenter = winningIndex * arcSize + arcSize / 2;
     const pointerOffset = (3 * Math.PI) / 2; // 270 degrees (Top)
 
-    const fullSpins = 6 + Math.floor(Math.random() * 4);
+    const fullSpins = 25 + Math.floor(Math.random() * 6);
     const targetAngle = pointerOffset - desiredSliceCenter + fullSpins * 2 * Math.PI;
 
     const startAngle = rotationAngleRef.current % (2 * Math.PI);
     const totalRotation = targetAngle - startAngle;
 
-    const duration = 6500;
+    const duration = 30000; // 30 seconds spin
     const startTime = performance.now();
 
     let lastTickAngle = startAngle;
@@ -285,19 +286,11 @@ export default function WheelOfFortune({
       const elapsed = currentTime - startTime;
       const progress = Math.min(elapsed / duration, 1);
 
-      const easeOut = 1 - Math.pow(1 - progress, 4);
+      const easeOut = 1 - Math.pow(1 - progress, 3.8);
       const currentAngle = startAngle + totalRotation * easeOut;
 
       rotationAngleRef.current = currentAngle;
       drawWheel(currentAngle);
-
-      if (soundEnabled) {
-        const delta = Math.abs(currentAngle - lastTickAngle);
-        if (delta >= arcSize * 0.9) {
-          playTickSound();
-          lastTickAngle = currentAngle;
-        }
-      }
 
       if (progress < 1) {
         requestAnimationFrame(animate);
@@ -305,10 +298,6 @@ export default function WheelOfFortune({
         setIsSpinning(false);
         const winner = displaySlices[winningIndex];
         setCurrentWinner(winner);
-
-        if (soundEnabled) {
-          playWinnerFanfare();
-        }
 
         triggerCelebrationConfetti();
 
@@ -477,15 +466,6 @@ export default function WheelOfFortune({
               {onlyNonWinners ? 'استبعاد الفائزين' : 'شمل الجميع'}
             </button>
 
-            <button
-              type="button"
-              onClick={() => setSoundEnabled(!soundEnabled)}
-              className="p-2 rounded-xl bg-slate-800 text-slate-300 hover:text-white border border-slate-700 transition-colors"
-              title={soundEnabled ? 'كتم الصوت' : 'تفعيل الصوت'}
-            >
-              {soundEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
-            </button>
-
             {/* Live Stage Fullscreen Mode Button */}
             <button
               type="button"
@@ -515,7 +495,6 @@ export default function WheelOfFortune({
           selectedPrize={selectedPrize}
           theme={theme}
           maskPhone={maskPhone}
-          soundEnabled={soundEnabled}
           onlyNonWinners={onlyNonWinners}
           onWinnerSelected={(winner) => {
             setCurrentWinner(winner);

@@ -1,6 +1,6 @@
 {
-  "name": "سحب وقيف اوي المتاجر | Store Giveaway Wheel",
-  "description": "منصة سحب تفاعلية للمتاجر مع عجلة الحظ، تسجيل أسماء وأرقام هواتف المشاركين عبر رابط مخصص، وتخصيص هوية وثيم وشعار المتجر",
+  "name": "متجر الرعد | R3D Store Giveaway Wheel",
+  "description": "منصة سحب تفاعلية لمتجر الرعد مع عجلة الحظ، تسجيل أسماء وأرقام هواتف المشاركين عبر رابط مخصص",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

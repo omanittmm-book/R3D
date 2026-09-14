@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Participant, Prize, StoreTheme } from '../types';
-import { Play, Sparkles, UserCheck, Volume2, VolumeX, ShieldAlert, Award } from 'lucide-react';
-import { playTickSound, playWinnerFanfare } from '../utils/audio';
+import { Play, Sparkles, UserCheck, ShieldAlert, Award, Lock } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import R3DLogo from './R3DLogo';
 
@@ -10,8 +9,9 @@ interface DigitalLuckyDrawProps {
   selectedPrize: Prize;
   theme: StoreTheme;
   maskPhone: boolean;
-  soundEnabled: boolean;
   onlyNonWinners: boolean;
+  isAdmin?: boolean;
+  onRequestAdminLogin?: () => void;
   onWinnerSelected: (winner: Participant) => void;
 }
 
@@ -20,8 +20,9 @@ export default function DigitalLuckyDraw({
   selectedPrize,
   theme,
   maskPhone,
-  soundEnabled,
   onlyNonWinners,
+  isAdmin = false,
+  onRequestAdminLogin,
   onWinnerSelected,
 }: DigitalLuckyDrawProps) {
   const [isRolling, setIsRolling] = useState(false);
@@ -45,7 +46,7 @@ export default function DigitalLuckyDraw({
     setIsRolling(true);
     let speed = 40; // ms
     let elapsed = 0;
-    const totalDuration = 4800; // 4.8 seconds suspense roll
+    const totalDuration = 30000; // 30 seconds suspense roll
     const startTime = Date.now();
 
     // Pick a winner fairly in advance
@@ -60,10 +61,6 @@ export default function DigitalLuckyDraw({
       const randomIndex = Math.floor(Math.random() * eligible.length);
       setDisplayedCandidate(eligible[randomIndex]);
 
-      if (soundEnabled && Math.random() > 0.3) {
-        playTickSound(1 + progress);
-      }
-
       if (elapsed < totalDuration) {
         // Slow down smoothly in the last 1.5 seconds
         if (progress > 0.65) {
@@ -75,10 +72,6 @@ export default function DigitalLuckyDraw({
         setDisplayedCandidate(winningParticipant);
         setIsRolling(false);
         setRecentPicks((prev) => [winningParticipant, ...prev.slice(0, 4)]);
-
-        if (soundEnabled) {
-          playWinnerFanfare();
-        }
 
         // Spectacular Confetti
         confetti({
@@ -163,21 +156,32 @@ export default function DigitalLuckyDraw({
 
         {/* Draw Trigger Button */}
         <div className="flex flex-col items-center gap-3">
-          <button
-            id="start-digital-draw-btn"
-            type="button"
-            onClick={startDigitalDraw}
-            disabled={isRolling || eligible.length === 0}
-            className="px-10 py-4 rounded-2xl text-lg sm:text-xl font-black text-white shadow-2xl transition-all duration-200 flex items-center gap-3 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed hover:brightness-110 cursor-pointer"
-            style={{
-              backgroundColor: theme.primary,
-              boxShadow: `0 0 30px ${theme.primary}60`,
-            }}
-          >
-            <Play className={`w-6 h-6 fill-white ${isRolling ? 'animate-spin' : ''}`} />
-            <span>{isRolling ? 'جاري خلط أرقام التذاكر...' : 'بدء السحب الرقمي السريع!'}</span>
-            <Sparkles className="w-5 h-5 text-white animate-pulse" />
-          </button>
+          {isAdmin ? (
+            <button
+              id="start-digital-draw-btn"
+              type="button"
+              onClick={startDigitalDraw}
+              disabled={isRolling || eligible.length === 0}
+              className="px-10 py-4 rounded-2xl text-lg sm:text-xl font-black text-white shadow-2xl transition-all duration-200 flex items-center gap-3 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed hover:brightness-110 cursor-pointer"
+              style={{
+                backgroundColor: theme.primary,
+                boxShadow: `0 0 30px ${theme.primary}60`,
+              }}
+            >
+              <Play className={`w-6 h-6 fill-white ${isRolling ? 'animate-spin' : ''}`} />
+              <span>{isRolling ? 'جاري خلط أرقام التذاكر...' : 'بدء السحب الرقمي السريع!'}</span>
+              <Sparkles className="w-5 h-5 text-white animate-pulse" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={onRequestAdminLogin}
+              className="px-8 py-3.5 rounded-2xl text-base font-bold text-amber-300 bg-amber-500/15 border border-amber-500/40 hover:bg-amber-500/25 shadow-xl transition-all duration-200 flex items-center gap-2.5 cursor-pointer"
+            >
+              <Lock size={18} className="text-amber-400" />
+              <span>بدء السحب مخصص للأدمن فقط (سجل الدخول)</span>
+            </button>
+          )}
           <span className="text-xs text-slate-400">
             عدد المرشحين المؤهلين حالياً: <strong className="text-cyan-400">{eligible.length}</strong> مشترك
           </span>

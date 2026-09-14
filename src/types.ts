@@ -19,6 +19,31 @@ export interface Prize {
   color: string;
 }
 
+export interface CurrentPrize {
+  title: string;
+  details: string;
+}
+
+export interface WheelState {
+  isSpinning: boolean;
+  winnerName?: string;
+  winnerId?: string;
+  winnerTicket?: number;
+  prizeTitle?: string;
+  spunAt?: string;
+}
+
+export interface PublicGiveawayState {
+  currentPrize: CurrentPrize;
+  wheelState: WheelState;
+  totalParticipants: number;
+  participantNames: string[];
+  isRegistrationOpen: boolean;
+  storeName: string;
+  storeTagline: string;
+  themeId: string;
+}
+
 export interface StoreSettings {
   storeName: string;
   storeTagline: string;
@@ -36,6 +61,10 @@ export interface StoreSettings {
   isRegistrationOpen: boolean;
   allowDuplicates: boolean;
   maskPhoneNumbers: boolean;
+  adminPin?: string;
+  adminPassword?: string;
+  currentPrize: CurrentPrize;
+  wheelState: WheelState;
   prizes: Prize[];
 }
 

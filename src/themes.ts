@@ -139,19 +139,13 @@ export const PRESET_LOGOS = [
   },
 ];
 
-export const DEFAULT_PRIZES: Prize[] = [
-  { id: '1', title: 'آيفون 16 برو ماكس تيتانيوم (iPhone 16 Pro Max)', quantity: 1, icon: 'Smartphone', color: '#06B6D4' },
-  { id: '2', title: 'قسيمة شراء R3D بقيمة 1,000 ريال', quantity: 1, icon: 'Gift', color: '#22D3EE' },
-  { id: '3', title: 'جهاز بلايستيشن 5 (PlayStation 5)', quantity: 1, icon: 'Package', color: '#38BDF8' },
-  { id: '4', title: 'ساعة ذكية فاخرة Apple Watch Ultra', quantity: 2, icon: 'Watch', color: '#E2E8F0' },
-  { id: '5', title: 'بوكس هدايا ومنتجات R3D الحصرية', quantity: 5, icon: 'Sparkles', color: '#00F0FF' },
-];
+export const DEFAULT_PRIZES: Prize[] = [];
 
 export const DEFAULT_STORE_SETTINGS: StoreSettings = {
-  storeName: 'متجر R3D الفاخر',
-  storeTagline: 'سحب R3D الحصري وعجلة الحظ الكبرى لعملائنا الكرام',
-  giveawayTitle: 'السحب الكبير على هدايا وجوائز R3D الفاخرة',
-  giveawayDescription: 'سجل اسمك ورقم جوالك للدخول في سحب وعجلة حظ R3D للفوز بجوائز قيمة وفورية!',
+  storeName: 'متجر الرعد',
+  storeTagline: 'سحب حصري وعجلة الحظ الكبرى للمشاركين الكرام',
+  giveawayTitle: 'السحب الكبير وعجلة الحظ',
+  giveawayDescription: 'سجل اسمك وقبيلتك ورقم هاتفك (8 أرقام) للدخول في السحب المباشر وعجلة الحظ للفوز بجوائز قيمة!',
   logoUrl: '',
   logoType: 'preset',
   logoPreset: 'r3d',
@@ -159,6 +153,18 @@ export const DEFAULT_STORE_SETTINGS: StoreSettings = {
   isRegistrationOpen: true,
   allowDuplicates: false,
   maskPhoneNumbers: true,
-  prizes: DEFAULT_PRIZES,
+  adminPin: '1234',
+  adminPassword: 'Alrneem9@1',
+  currentPrize: {
+    title: '',
+    details: '',
+  },
+  wheelState: {
+    isSpinning: false,
+    winnerName: '',
+    prizeTitle: '',
+    spunAt: '',
+  },
+  prizes: [],
 };
 

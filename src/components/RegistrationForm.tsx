@@ -1,389 +1,356 @@
-import React, { useState } from 'react';
-import { StoreSettings, StoreTheme, Participant } from '../types';
-import LogoDisplay from './LogoDisplay';
-import { playSubmitSuccess } from '../utils/audio';
-import { CheckCircle2, Ticket, Sparkles, AlertCircle, Share2, Phone, User, Clock, ArrowRight } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { CurrentPrize, StoreTheme, Participant } from '../types';
+import { Sparkles, Trophy, Phone, User, CheckCircle2, AlertCircle, ArrowLeft, ShieldCheck, Ticket, Lock, Eye } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
 interface RegistrationFormProps {
-  settings: StoreSettings;
   theme: StoreTheme;
-  onParticipantAdded: () => Promise<void>;
-  onSwitchToWheel?: () => void;
+  currentPrize: CurrentPrize;
+  storeName: string;
+  storeTagline: string;
+  isRegistrationOpen: boolean;
+  onRegistered: (participant: Participant) => void;
+  onGoToSpectator: () => void;
+}
+
+// Convert Arabic-Indic numerals to 0-9
+function normalizeArabicDigits(str: string): string {
+  const map: Record<string, string> = {
+    '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4',
+    '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9',
+  };
+  return str.replace(/[٠-٩]/g, (d) => map[d] || d);
 }
 
 export default function RegistrationForm({
-  settings,
   theme,
-  onParticipantAdded,
-  onSwitchToWheel,
+  currentPrize,
+  storeName,
+  storeTagline,
+  isRegistrationOpen,
+  onRegistered,
+  onGoToSpectator,
 }: RegistrationFormProps) {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
+  const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [registeredTicket, setRegisteredTicket] = useState<Participant | null>(null);
+  const [justRegistered, setJustRegistered] = useState<Participant | null>(null);
+
+  // Phone validation: extract digits
+  const cleanDigits = normalizeArabicDigits(phone).replace(/\D/g, '');
+  const digitsCount = cleanDigits.length;
+  const isPhoneValid = digitsCount === 8;
+  const isNameValid = name.trim().length >= 3;
+  const canSubmit = isNameValid && isPhoneValid && isRegistrationOpen && !isLoading;
+
+  const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = normalizeArabicDigits(e.target.value);
+    // Allow digits only and max 8 digits
+    const digitsOnly = val.replace(/\D/g, '').slice(0, 8);
+    setPhone(digitsOnly);
+    if (error) setError('');
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setErrorMessage(null);
+    setError('');
 
-    const cleanName = name.trim();
-    const cleanPhone = phone.trim();
-
-    if (!cleanName || cleanName.length < 2) {
-      setErrorMessage('يرجى إدخال اسمك الكريم بشكل صحيح.');
+    const trimmedName = name.trim();
+    if (!trimmedName || trimmedName.length < 3) {
+      setError('يرجى كتابة الاسم والقبيلة بالكامل (3 أحرف على الأقل).');
       return;
     }
 
-    if (!cleanPhone || cleanPhone.length < 8) {
-      setErrorMessage('يرجى إدخال رقم جوال صحيح للتواصل في حال فوزك.');
+    if (digitsCount !== 8) {
+      setError(`رقم الهاتف يجب أن يتكون من 8 أرقام بالضبط. حالياً كتبت: ${digitsCount} أرقام.`);
       return;
     }
 
     setIsLoading(true);
 
     try {
-      const response = await fetch('/api/participants', {
+      const res = await fetch('/api/participants', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: cleanName, phone: cleanPhone }),
+        body: JSON.stringify({
+          name: trimmedName,
+          phone: cleanDigits,
+        }),
       });
 
-      const data = await response.json();
+      const data = await res.json();
 
-      if (!response.ok || !data.success) {
-        setErrorMessage(data.error || 'حدث خطأ أثناء التسجيل، يرجى المحاولة لاحقاً.');
+      if (!res.ok || !data.success) {
+        setError(data.error || 'حدث خطأ أثناء التسجيل. يرجى التأكد من البيانات.');
+        setIsLoading(false);
         return;
       }
 
-      // Success!
-      setRegisteredTicket(data.participant);
-      setName('');
-      setPhone('');
-      playSubmitSuccess();
+      // Save to LocalStorage so user is remembered
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('giveaway_registered_user', JSON.stringify(data.participant));
+      }
 
-      // Trigger mini confetti
+      setJustRegistered(data.participant);
+
       confetti({
-        particleCount: 50,
-        spread: 60,
-        origin: { y: 0.7 },
-        colors: [theme.primary, theme.secondary, '#F59E0B', '#10B981'],
+        particleCount: 60,
+        spread: 70,
+        origin: { y: 0.6 },
+        colors: [theme.primary, theme.secondary, '#10B981', '#F59E0B'],
       });
 
-      await onParticipantAdded();
+      // Notify parent after small delay
+      setTimeout(() => {
+        onRegistered(data.participant);
+      }, 2000);
     } catch {
-      setErrorMessage('تعذر الاتصال بالخادم. يرجى التحقق من اتصال الإنترنت.');
+      setError('تعذر الاتصال بالخادم. يرجى التحقق من اتصال الإنترنت والمحاولة مجدداً.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleShareWhatsApp = () => {
-    const text = encodeURIComponent(
-      `🎁 شارك في سحب ${settings.storeName} على جوائز قيمة عبر عجلة الحظ! سجل اسمك ورقمك هنا: ${window.location.origin}`
-    );
-    window.open(`https://api.whatsapp.com/send?text=${text}`, '_blank');
-  };
-
   return (
-    <div className="w-full max-w-xl mx-auto px-4 py-8" id="registration-section">
-      {/* Store Header Info */}
-      <div className="text-center mb-8">
-        <div className="flex justify-center mb-4">
-          <LogoDisplay
-            logoUrl={settings.logoUrl}
-            logoType={settings.logoType}
-            logoPreset={settings.logoPreset}
-            size="lg"
-            className="ring-4 ring-white/10"
-          />
-        </div>
-
-        <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-slate-800/80 border border-slate-700 text-xs text-amber-400 font-bold mb-3 shadow-sm">
-          <Sparkles size={13} />
-          <span>{settings.isRegistrationOpen ? 'التسجيل مفتوح الآن في السحب' : 'التسجيل مغلق حالياً'}</span>
+    <div className="w-full max-w-xl mx-auto px-4 py-8 animate-in fade-in duration-300" dir="rtl">
+      {/* Top Banner */}
+      <div className="text-center mb-6">
+        <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-slate-900 border border-slate-700 text-xs text-amber-400 font-bold mb-3 shadow-sm">
+          <Sparkles size={14} className="animate-spin" style={{ animationDuration: '3s' }} />
+          <span>{isRegistrationOpen ? 'التسجيل مفتوح الآن في السحب المباشر' : 'التسجيل مغلق حالياً'}</span>
         </div>
 
         <h1 className="text-2xl sm:text-3xl font-black text-white mb-2 leading-tight">
-          {settings.giveawayTitle || 'السحب الكبير على الجوائز'}
+          {storeName || 'سحب وقيف اوي المتاجر'}
         </h1>
-
-        <p className="text-sm sm:text-base text-slate-300 max-w-md mx-auto leading-relaxed">
-          {settings.giveawayDescription || 'سجل اسمك ورقم هاتفك للدخول في عجلة الحظ'}
+        <p className="text-sm text-slate-300 max-w-md mx-auto leading-relaxed">
+          {storeTagline || 'سجل اسمك ورقم هاتفك للدخول في عجلة الحظ والسحب المباشر على جوائز قيمة!'}
         </p>
-
-        <p className="text-xs text-slate-400 mt-2 font-medium">مقدّم من: {settings.storeName}</p>
       </div>
 
-      {/* Available Prizes Preview Pills */}
-      {settings.prizes && settings.prizes.length > 0 && (
-        <div className="mb-8 p-4 rounded-2xl bg-slate-900/60 border border-slate-800">
-          <p className="text-xs font-bold text-slate-400 mb-2.5 text-center">الجوائز المرصودة في هذا السحب:</p>
-          <div className="flex flex-wrap items-center justify-center gap-2">
-            {settings.prizes.map((prize) => (
-              <span
-                key={prize.id}
-                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-slate-800/90 border border-slate-700 text-xs font-semibold text-slate-200"
-              >
-                <span>🎁</span>
-                <span>{prize.title}</span>
-              </span>
-            ))}
+      {/* Prominent Current Prize Card */}
+      {currentPrize && currentPrize.title && (
+        <div className="relative mb-6 p-5 sm:p-6 rounded-3xl bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 border-2 border-amber-500/50 shadow-2xl overflow-hidden">
+          <div className="absolute top-0 left-0 w-32 h-32 bg-amber-500/10 rounded-full blur-2xl -z-0 pointer-events-none" />
+          <div className="relative z-10 flex items-start sm:items-center gap-4">
+            <div
+              className="w-14 h-14 rounded-2xl flex items-center justify-center text-white shrink-0 shadow-lg"
+              style={{ backgroundColor: `${theme.primary}25`, border: `2px solid ${theme.primary}` }}
+            >
+              <Trophy className="w-7 h-7 text-amber-400 animate-bounce" style={{ animationDuration: '2.5s' }} />
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-[11px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                  الجائزة الحالية في هذا السحب
+                </span>
+              </div>
+              <h3 className="text-lg sm:text-xl font-black text-white">{currentPrize.title}</h3>
+              {currentPrize.details && (
+                <div className="text-xs text-slate-300 mt-2 leading-relaxed whitespace-pre-line bg-slate-950/40 p-3 rounded-xl border border-slate-700/40">
+                  {currentPrize.details}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
 
-      {/* If already registered successfully, show Lucky Ticket card */}
-      {registeredTicket ? (
-        <div className="bg-slate-900 border-2 border-amber-500/80 rounded-3xl p-6 sm:p-8 shadow-2xl text-center relative overflow-hidden animate-in zoom-in-95 duration-300">
+      {/* Registration Card or Success State */}
+      {justRegistered ? (
+        <div className="bg-slate-900 border-2 border-emerald-500/80 rounded-3xl p-6 sm:p-8 shadow-2xl text-center relative overflow-hidden animate-in zoom-in-95 duration-300">
           <div className="w-16 h-16 mx-auto rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 mb-4">
             <CheckCircle2 size={36} />
           </div>
 
-          <h2 className="text-2xl font-black text-white mb-1">تم تأكيد دخولك السحب بنجاح!</h2>
-          <p className="text-sm text-slate-300 mb-6">اسمك الآن مسجل في عجلة الحظ، نتمنى لك أوفر الحظوظ بالفوز.</p>
+          <h2 className="text-2xl font-black text-white mb-1">تم تأكيد تسجيلك في السحب!</h2>
+          <p className="text-sm text-slate-300 mb-5">
+            اسمك الآن مسجل في عجلة الحظ، جاري نقلك تلقائياً إلى شاشة المشاهدة المباشرة...
+          </p>
 
-          {/* Ticket Element */}
-          <div className="relative bg-gradient-to-br from-slate-800 to-slate-950 border-2 border-dashed border-amber-400/50 rounded-2xl p-5 mb-6 text-right shadow-inner">
-            <div className="flex items-center justify-between border-b border-slate-700/80 pb-3 mb-3">
-              <span className="text-xs text-slate-400">تذكرة دخول السحب:</span>
-              <span className="font-mono text-xl font-black text-amber-400">#{registeredTicket.ticketNumber}</span>
+          <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 text-right mb-6">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2 mb-2">
+              <span className="text-xs text-slate-400">تذكرة السحب:</span>
+              <span className="text-lg font-mono font-black text-amber-400">#{justRegistered.ticketNumber}</span>
             </div>
-
-            <div className="space-y-2 text-sm">
-              <div className="flex items-center justify-between">
-                <span className="text-slate-400 text-xs">الاسم:</span>
-                <span className="font-bold text-white">{registeredTicket.name}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-slate-400 text-xs">رقم الجوال:</span>
-                <span className="font-mono font-medium text-slate-300 dir-ltr">
-                  {registeredTicket.phone.slice(0, 3) + '****' + registeredTicket.phone.slice(-3)}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-slate-400 text-xs">تاريخ التسجيل:</span>
-                <span className="text-xs text-slate-400">
-                  {new Date(registeredTicket.registeredAt).toLocaleDateString('ar-SA', {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })}
-                </span>
-              </div>
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-xs text-slate-400">الاسم والقبيلة:</span>
+              <span className="font-bold text-white">{justRegistered.name}</span>
             </div>
           </div>
 
-          {/* Actions */}
-          <div className="space-y-3">
-            <button
-              type="button"
-              onClick={handleShareWhatsApp}
-              className="w-full py-3.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 font-bold text-white shadow-lg flex items-center justify-center gap-2 transition-transform active:scale-98"
-            >
-              <Share2 size={18} />
-              <span>مشاركة السحب عبر واتساب مع أصدقائك</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setRegisteredTicket(null)}
-              className="w-full py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-colors"
-            >
-              تسجيل مشترك آخر
-            </button>
-
-            {onSwitchToWheel && (
-              <button
-                type="button"
-                onClick={onSwitchToWheel}
-                className="w-full py-2 px-4 text-xs text-amber-400 hover:text-amber-300 font-medium flex items-center justify-center gap-1 mt-2"
-              >
-                <span>الانتقال لمشاهدة عجلة الحظ</span>
-                <ArrowRight size={14} className="rotate-180" />
-              </button>
-            )}
+          <button
+            type="button"
+            onClick={onGoToSpectator}
+            className="w-full py-3.5 rounded-xl font-black text-slate-950 text-sm shadow-xl flex items-center justify-center gap-2 cursor-pointer hover:brightness-110 active:scale-95 transition-all"
+            style={{ backgroundColor: theme.primary }}
+          >
+            <span>الانتقال فوراً لشاشة المشاهدة المباشرة</span>
+            <ArrowLeft size={18} />
+          </button>
+        </div>
+      ) : !isRegistrationOpen ? (
+        <div className="bg-slate-900 border-2 border-rose-500/50 rounded-3xl p-8 sm:p-10 shadow-2xl text-center relative overflow-hidden animate-in fade-in duration-300">
+          <div className="w-20 h-20 mx-auto rounded-3xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center text-rose-400 mb-5 shadow-lg">
+            <Lock size={38} />
           </div>
+
+          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-rose-500/20 border border-rose-500/40 text-rose-300 text-xs font-black mb-3">
+            <span>⛔ باب التسجيل مغلق حالياً</span>
+          </div>
+
+          <h2 className="text-2xl sm:text-3xl font-black text-white mb-3">
+            تم إغلاق باب التسجيل في السحب
+          </h2>
+          <p className="text-sm sm:text-base text-slate-300 max-w-lg mx-auto mb-8 leading-relaxed">
+            تم إغلاق باب التسجيل والاكتفاء بالعدد الحالي من المشاركين لإجراء السحب. بإمكانك متابعة البث المباشر لعجلة الحظ ومشاهدة إعلان الفائزين الآن.
+          </p>
+
+          <button
+            type="button"
+            onClick={onGoToSpectator}
+            className="w-full sm:w-auto px-8 py-4 rounded-2xl font-black text-slate-950 text-sm shadow-xl flex items-center justify-center gap-2 mx-auto cursor-pointer hover:brightness-110 hover:scale-[1.02] active:scale-95 transition-all"
+            style={{ backgroundColor: theme.primary }}
+          >
+            <Eye size={20} />
+            <span>الانتقال للبث المباشر لعجلة السحب</span>
+            <ArrowLeft size={18} />
+          </button>
         </div>
       ) : (
-        /* Registration Form */
-        <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl backdrop-blur-sm">
-          {!settings.isRegistrationOpen ? (
-            <div className="text-center py-8">
-              <div className="w-16 h-16 mx-auto rounded-2xl bg-rose-500/20 text-rose-400 flex items-center justify-center mb-3">
-                <AlertCircle size={32} />
-              </div>
-              <h3 className="text-lg font-bold text-white mb-2">باب التسجيل مغلق حالياً</h3>
-              <p className="text-sm text-slate-400">
-                لقد انتهت فترة استقبال المشاركين أو تم إيقاف التسجيل مؤقتاً من قِبل إدارة المتجر.
+        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-4 mb-6">
+            <div>
+              <h2 className="text-lg font-black text-white flex items-center gap-2">
+                <span>📝</span> نموذج التسجيل في السحب
+              </h2>
+              <p className="text-xs text-slate-400 mt-0.5">
+                أدخل بياناتك بدقة للتواصل معك وتسليمك الجائزة عند الفوز
               </p>
             </div>
-          ) : (
-            <form onSubmit={handleSubmit} className="space-y-5">
-              {errorMessage && (
-                <div className="p-3.5 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs font-medium flex items-start gap-2.5">
-                  <AlertCircle size={16} className="shrink-0 mt-0.5" />
-                  <span>{errorMessage}</span>
-                </div>
-              )}
-
-              {/* Name Input */}
-              <div>
-                <label htmlFor="participant-name" className="block text-xs font-bold text-slate-300 mb-2">
-                  الاسم الكامل (الثلاثي أو الثنائي) <span className="text-amber-400">*</span>
-                </label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none text-slate-400">
-                    <User size={18} />
-                  </div>
-                  <input
-                    id="participant-name"
-                    type="text"
-                    required
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="مثال: عبدالله محمد الشمري"
-                    className="w-full bg-slate-800/90 border border-slate-700 rounded-xl pr-10 pl-4 py-3 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition-colors"
-                  />
-                </div>
-              </div>
-
-              {/* Phone Input */}
-              <div>
-                <label htmlFor="participant-phone" className="block text-xs font-bold text-slate-300 mb-2">
-                  رقم الهاتف للتواصل في حال الفوز <span className="text-amber-400">*</span>
-                </label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none text-slate-400">
-                    <Phone size={18} />
-                  </div>
-                  <input
-                    id="participant-phone"
-                    type="tel"
-                    required
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    placeholder="مثال: 0501234567"
-                    dir="ltr"
-                    className="w-full bg-slate-800/90 border border-slate-700 rounded-xl pr-10 pl-4 py-3 text-white placeholder-slate-500 text-sm text-right focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition-colors"
-                  />
-                </div>
-                <p className="text-[11px] text-slate-400 mt-1.5">
-                  لن يتم نشر رقم هاتفك كاملاً على الشاشة العامة للحفاظ على خصوصيتك.
-                </p>
-              </div>
-
-              {/* Submit Button */}
-              <button
-                id="submit-entry-btn"
-                type="submit"
-                disabled={isLoading}
-                className="w-full py-4 px-6 rounded-2xl text-base font-black text-slate-950 shadow-xl flex items-center justify-center gap-2 transition-all hover:brightness-110 active:scale-98 disabled:opacity-50 cursor-pointer"
-                style={{
-                  backgroundColor: theme.primary,
-                  boxShadow: `0 8px 25px ${theme.primary}40`,
-                }}
-              >
-                <Ticket size={20} />
-                <span>{isLoading ? 'جاري تسجيل دخولك...' : 'دخول السحب وعجلة الحظ الآن'}</span>
-              </button>
-            </form>
-          )}
-
-          {/* Quick Ticket Lookup Tool */}
-          <div className="mt-6 pt-5 border-t border-slate-800/80 text-center">
-            <TicketCheckerModal />
+            <div className="flex items-center gap-1 text-[11px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1 rounded-xl">
+              <ShieldCheck size={14} />
+              <span>بيانات مشفرة وآمنة</span>
+            </div>
           </div>
-        </div>
-      )}
-    </div>
-  );
-}
 
-function TicketCheckerModal() {
-  const [isOpen, setIsOpen] = useState(false);
-  const [query, setQuery] = useState('');
-  const [foundParticipant, setFoundParticipant] = useState<Participant | null>(null);
-  const [notFound, setNotFound] = useState(false);
-  const [isSearching, setIsSearching] = useState(false);
-
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!query.trim()) return;
-    setIsSearching(true);
-    setNotFound(false);
-    setFoundParticipant(null);
-
-    try {
-      const res = await fetch('/api/participants');
-      const data = await res.json();
-      if (data.success && Array.isArray(data.participants)) {
-        const cleanQ = query.trim().replace(/[^0-9]/g, '');
-        const match = data.participants.find(
-          (p: Participant) =>
-            p.phone.replace(/[^0-9]/g, '').endsWith(cleanQ) ||
-            p.ticketNumber.toString() === query.trim().replace('#', '')
-        );
-        if (match) {
-          setFoundParticipant(match);
-        } else {
-          setNotFound(true);
-        }
-      }
-    } catch {
-      setNotFound(true);
-    } finally {
-      setIsSearching(false);
-    }
-  };
-
-  return (
-    <div>
-      <button
-        type="button"
-        onClick={() => setIsOpen(!isOpen)}
-        className="text-xs text-cyan-400 hover:text-cyan-300 font-semibold underline inline-flex items-center gap-1.5 transition-colors"
-      >
-        <span>🔍 هل سجلت مسبقاً؟ اضغط هنا للتحقق من تذكرتك</span>
-      </button>
-
-      {isOpen && (
-        <div className="mt-4 p-4 rounded-2xl bg-slate-950 border border-cyan-500/30 text-right animate-in fade-in">
-          <p className="text-xs font-bold text-slate-300 mb-2">استعلام سريع عن تذكرة السحب:</p>
-          <form onSubmit={handleSearch} className="flex gap-2 mb-3">
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="اكتب رقم جوالك أو رقم التذكرة"
-              className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white text-xs placeholder-slate-500 focus:outline-none focus:border-cyan-400"
-            />
-            <button
-              type="submit"
-              disabled={isSearching}
-              className="px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold rounded-xl text-xs transition-colors"
-            >
-              {isSearching ? '...' : 'بحث'}
-            </button>
-          </form>
-
-          {foundParticipant && (
-            <div className="p-3 bg-cyan-950/40 border border-cyan-500/40 rounded-xl text-xs space-y-1">
-              <p className="text-emerald-400 font-bold">✓ تم العثور على اشتراكك بنجاح!</p>
-              <p className="text-white font-bold">الاسم: {foundParticipant.name}</p>
-              <p className="text-cyan-300 font-mono">رقم التذكرة: #{foundParticipant.ticketNumber}</p>
-              <p className="text-slate-400 text-[11px]">
-                الحالة: {foundParticipant.hasWon ? '🎉 فاز في السحب (' + foundParticipant.prizeWon + ')' : '⏳ مؤهل وبانتظار السحب'}
+          <form onSubmit={handleSubmit} className="space-y-5">
+            {/* Full Name & Tribe Input */}
+            <div>
+              <label className="block text-xs font-bold text-slate-300 mb-2">
+                الاسم والقبيلة <span className="text-rose-400">*</span>:
+              </label>
+              <div className="relative">
+                <input
+                  type="text"
+                  required
+                  value={name}
+                  onChange={(e) => {
+                    setName(e.target.value);
+                    if (error) setError('');
+                  }}
+                  placeholder="مثال: سالم بن ناصر الحارثي"
+                  className="w-full bg-slate-950 border border-slate-700 focus:border-cyan-400 rounded-2xl px-4 py-3.5 pr-11 text-sm font-semibold text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 transition-all"
+                />
+                <User className="absolute right-3.5 top-3.5 text-slate-500 w-5 h-5 pointer-events-none" />
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1.5">
+                اكتب اسمك الثلاثي أو الاسم مع القبيلة بشكل واضح.
               </p>
             </div>
-          )}
 
-          {notFound && (
-            <p className="text-rose-400 text-xs">لم نجد تسجيلاً يطابق هذا الرقم. تأكد من إدخال الرقم المسجل به.</p>
-          )}
+            {/* 8-Digit Phone Input */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-xs font-bold text-slate-300">
+                  رقم الهاتف (8 أرقام فقط) <span className="text-rose-400">*</span>:
+                </label>
+                {/* Visual digits counter badge */}
+                <span
+                  className={`text-[11px] font-mono px-2 py-0.5 rounded-lg border font-bold transition-all ${
+                    isPhoneValid
+                      ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                      : digitsCount > 0
+                      ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                      : 'bg-slate-800 text-slate-400 border-slate-700'
+                  }`}
+                >
+                  {isPhoneValid ? '8 / 8 أرقام مكتملة ✅' : `${digitsCount} / 8 أرقام`}
+                </span>
+              </div>
+
+              <div className="relative">
+                <input
+                  type="tel"
+                  inputMode="numeric"
+                  required
+                  maxLength={8}
+                  value={phone}
+                  onChange={handlePhoneChange}
+                  placeholder="9xxxxxxx أو 7xxxxxxx"
+                  className={`w-full bg-slate-950 border rounded-2xl px-4 py-3.5 pr-11 text-base font-mono tracking-wider font-bold text-white placeholder-slate-500 focus:outline-none focus:ring-2 transition-all ${
+                    isPhoneValid
+                      ? 'border-emerald-500/70 focus:border-emerald-400 focus:ring-emerald-500/20'
+                      : error
+                      ? 'border-rose-500/70 focus:border-rose-400 focus:ring-rose-500/20'
+                      : 'border-slate-700 focus:border-cyan-400 focus:ring-cyan-500/20'
+                  }`}
+                />
+                <Phone className="absolute right-3.5 top-3.5 text-slate-500 w-5 h-5 pointer-events-none" />
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1.5">
+                التحقق الصارم: يتكون من 8 أرقام فقط بدون مفتاح الدولة (مثال: 91234567 أو 79876543).
+              </p>
+            </div>
+
+            {/* Error Message */}
+            {error && (
+              <div className="p-3 rounded-2xl bg-rose-500/15 border border-rose-500/40 text-rose-300 text-xs font-bold flex items-center gap-2 animate-in fade-in">
+                <AlertCircle size={16} className="shrink-0 text-rose-400" />
+                <span>{error}</span>
+              </div>
+            )}
+
+            {/* Submit Button */}
+            <button
+              id="submit-registration-btn"
+              type="submit"
+              disabled={!canSubmit}
+              className={`w-full py-4 rounded-2xl font-black text-sm text-slate-950 shadow-xl flex items-center justify-center gap-2 transition-all duration-200 cursor-pointer ${
+                canSubmit
+                  ? 'hover:brightness-110 hover:scale-[1.01] active:scale-95'
+                  : 'opacity-40 cursor-not-allowed'
+              }`}
+              style={{ backgroundColor: theme.primary }}
+            >
+              {isLoading ? (
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 rounded-full border-2 border-slate-950 border-t-transparent animate-spin" />
+                  <span>جاري تسجيل بياناتك في السحب...</span>
+                </div>
+              ) : (
+                <>
+                  <Sparkles size={18} />
+                  <span>تأكيد التسجيل والدخول في السحب</span>
+                </>
+              )}
+            </button>
+
+            {/* Direct Link to Spectator if already registered */}
+            <div className="text-center pt-2">
+              <button
+                type="button"
+                onClick={onGoToSpectator}
+                className="text-xs text-slate-400 hover:text-cyan-400 transition-colors inline-flex items-center gap-1.5 cursor-pointer"
+              >
+                <span>مسجل مسبقاً؟ اضغط هنا للانتقال لشاشة المشاهدة المباشرة</span>
+                <ArrowLeft size={14} />
+              </button>
+            </div>
+          </form>
         </div>
       )}
     </div>
   );
 }
-

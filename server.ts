@@ -2,12 +2,36 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
+import { createClient } from '@supabase/supabase-js';
 
 const PORT = 3000;
 const DB_FILE = path.join(process.cwd(), 'giveaway_data.json');
+const ADMIN_PASSWORD = 'Alrneem9@1';
+
+// Supabase Configuration
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://wrfbukhfjwdrfvbscfub.supabase.co';
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndyZmJ1a2hmandkcmZ2YnNjZnViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkzMjAzNjgsImV4cCI6MjEwNDg5NjM2OH0.wj6cF8k4Wr6Fpw92HLCRI3Yy5VpPf9XvYLZW7Jg_L0s';
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: { persistSession: false },
+});
 
 // Types
-interface Prize {
+export interface CurrentPrize {
+  title: string;
+  details: string;
+}
+
+export interface WheelState {
+  isSpinning: boolean;
+  winnerName?: string;
+  winnerId?: string;
+  winnerTicket?: number;
+  prizeTitle?: string;
+  spunAt?: string;
+}
+
+export interface Prize {
   id: string;
   title: string;
   quantity: number;
@@ -15,7 +39,7 @@ interface Prize {
   color: string;
 }
 
-interface StoreSettings {
+export interface StoreSettings {
   storeName: string;
   storeTagline: string;
   giveawayTitle: string;
@@ -32,14 +56,18 @@ interface StoreSettings {
   isRegistrationOpen: boolean;
   allowDuplicates: boolean;
   maskPhoneNumbers: boolean;
+  adminPin?: string;
+  adminPassword?: string;
+  currentPrize: CurrentPrize;
+  wheelState: WheelState;
   prizes: Prize[];
 }
 
-interface Participant {
+export interface Participant {
   id: string;
   ticketNumber: number;
-  name: string;
-  phone: string;
+  name: string; // الاسم والقبيلة
+  phone: string; // 8 digits strictly
   registeredAt: string;
   hasWon: boolean;
   wonAt?: string;
@@ -52,20 +80,14 @@ interface DatabaseState {
   nextTicketNumber: number;
 }
 
-const DEFAULT_PRIZES: Prize[] = [
-  { id: '1', title: 'آيفون 16 برو ماكس تيتانيوم (iPhone 16 Pro Max)', quantity: 1, icon: 'Smartphone', color: '#06B6D4' },
-  { id: '2', title: 'قسيمة شراء R3D بقيمة 1,000 ريال', quantity: 1, icon: 'Gift', color: '#22D3EE' },
-  { id: '3', title: 'جهاز بلايستيشن 5 (PlayStation 5)', quantity: 1, icon: 'Package', color: '#38BDF8' },
-  { id: '4', title: 'ساعة ذكية فاخرة Apple Watch Ultra', quantity: 2, icon: 'Watch', color: '#E2E8F0' },
-  { id: '5', title: 'بوكس هدايا ومنتجات R3D الحصرية', quantity: 5, icon: 'Sparkles', color: '#00F0FF' },
-];
+const DEFAULT_PRIZES: Prize[] = [];
 
 const DEFAULT_STATE: DatabaseState = {
   settings: {
-    storeName: 'متجر R3D الفاخر',
-    storeTagline: 'سحب R3D الحصري وعجلة الحظ الكبرى لعملائنا الكرام',
-    giveawayTitle: 'السحب الكبير على هدايا وجوائز R3D الفاخرة',
-    giveawayDescription: 'سجل اسمك ورقم جوالك للدخول في سحب وعجلة حظ R3D للفوز بجوائز قيمة وفورية!',
+    storeName: 'متجر الرعد',
+    storeTagline: 'سحب حصري وعجلة الحظ الكبرى للمشاركين الكرام',
+    giveawayTitle: 'السحب الكبير وعجلة الحظ',
+    giveawayDescription: 'سجل اسمك وقبيلتك ورقم هاتفك (8 أرقام) للدخول في السحب المباشر وعجلة الحظ للفوز بجوائز قيمة!',
     logoUrl: '',
     logoType: 'preset',
     logoPreset: 'r3d',
@@ -73,73 +95,94 @@ const DEFAULT_STATE: DatabaseState = {
     isRegistrationOpen: true,
     allowDuplicates: false,
     maskPhoneNumbers: true,
-    prizes: DEFAULT_PRIZES,
+    adminPassword: ADMIN_PASSWORD,
+    currentPrize: {
+      title: '',
+      details: '',
+    },
+    wheelState: {
+      isSpinning: false,
+      winnerName: '',
+      prizeTitle: '',
+      spunAt: '',
+    },
+    prizes: [],
   },
-  participants: [
-    {
-      id: 'p-1',
-      ticketNumber: 1001,
-      name: 'عبدالله محمد الشمري',
-      phone: '0501234567',
-      registeredAt: new Date(Date.now() - 3600000 * 5).toISOString(),
-      hasWon: false,
-    },
-    {
-      id: 'p-2',
-      ticketNumber: 1002,
-      name: 'سارة خالد العتيبي',
-      phone: '0559876543',
-      registeredAt: new Date(Date.now() - 3600000 * 4).toISOString(),
-      hasWon: false,
-    },
-    {
-      id: 'p-3',
-      ticketNumber: 1003,
-      name: 'فيصل عبدالرحمن الدوسري',
-      phone: '0543322110',
-      registeredAt: new Date(Date.now() - 3600000 * 3).toISOString(),
-      hasWon: false,
-    },
-    {
-      id: 'p-4',
-      ticketNumber: 1004,
-      name: 'نورة أحمد القحطاني',
-      phone: '0567788990',
-      registeredAt: new Date(Date.now() - 3600000 * 2).toISOString(),
-      hasWon: false,
-    },
-    {
-      id: 'p-5',
-      ticketNumber: 1005,
-      name: 'عمر سلطان الحربي',
-      phone: '0531144778',
-      registeredAt: new Date(Date.now() - 3600000 * 1).toISOString(),
-      hasWon: false,
-    },
-    {
-      id: 'p-6',
-      ticketNumber: 1006,
-      name: 'ريم عبدالعزيز الغامدي',
-      phone: '0582255881',
-      registeredAt: new Date(Date.now() - 1800000).toISOString(),
-      hasWon: false,
-    },
-  ],
-  nextTicketNumber: 1007,
+  participants: [],
+  nextTicketNumber: 1001,
 };
 
 let db: DatabaseState = { ...DEFAULT_STATE };
+
+// Helper: Normalize Arabic-Indic digits to ASCII and validate 8 digits strictly
+export function normalizeAndValidatePhone(raw: string): { isValid: boolean; normalized: string; error?: string } {
+  if (!raw || typeof raw !== 'string') {
+    return { isValid: false, normalized: '', error: 'يرجى إدخال رقم الهاتف' };
+  }
+
+  // Convert Arabic-Indic numerals ٠-٩ to 0-9
+  const arabicIndicMap: Record<string, string> = {
+    '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4',
+    '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9',
+  };
+  let cleaned = raw.replace(/[٠-٩]/g, (d) => arabicIndicMap[d] || d);
+
+  // Remove whitespace, dashes, plus, parentheses
+  cleaned = cleaned.replace(/[\s\-\(\)\+]/g, '').trim();
+
+  // Strip international prefixes if user included country code (e.g. +968 or 00968)
+  if (cleaned.startsWith('00968') && cleaned.length === 13) {
+    cleaned = cleaned.slice(5);
+  } else if (cleaned.startsWith('968') && cleaned.length === 11) {
+    cleaned = cleaned.slice(3);
+  }
+
+  // Must be strictly 8 digits
+  if (!/^[0-9]{8}$/.test(cleaned)) {
+    return {
+      isValid: false,
+      normalized: cleaned,
+      error: 'رقم الهاتف يجب أن يتكون من 8 أرقام فقط (مثال: 91234567)',
+    };
+  }
+
+  return { isValid: true, normalized: cleaned };
+}
 
 // Load persistent DB
 try {
   if (fs.existsSync(DB_FILE)) {
     const raw = fs.readFileSync(DB_FILE, 'utf-8');
-    db = JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    db = {
+      ...DEFAULT_STATE,
+      ...parsed,
+      settings: {
+        ...DEFAULT_STATE.settings,
+        ...(parsed.settings || {}),
+        adminPassword: ADMIN_PASSWORD,
+        currentPrize: parsed.settings?.currentPrize || DEFAULT_STATE.settings.currentPrize,
+        wheelState: parsed.settings?.wheelState || DEFAULT_STATE.settings.wheelState,
+      },
+    };
+    // Ensure initial participants have valid 8-digit phones
+    if (db.participants && db.participants.length > 0) {
+      db.participants = db.participants.map((p, idx) => {
+        const check = normalizeAndValidatePhone(p.phone);
+        return {
+          ...p,
+          phone: check.isValid ? check.normalized : (91000000 + idx).toString(),
+        };
+      });
+    } else {
+      db.participants = DEFAULT_STATE.participants;
+    }
   } else {
     fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), 'utf-8');
   }
 } catch (err) {
   console.error('Error loading DB file, fallback to defaults:', err);
+  db = { ...DEFAULT_STATE };
 }
 
 function saveDb() {
@@ -150,94 +193,367 @@ function saveDb() {
   }
 }
 
+// --- SUPABASE CLOUD PERSISTENCE HELPERS ---
+
+async function syncFromSupabase() {
+  try {
+    console.log('[Supabase] Initializing sync with cloud database...');
+
+    // 1. Fetch participants from Supabase table 'participants'
+    const { data: pData, error: pErr } = await supabase
+      .from('participants')
+      .select('*')
+      .order('ticket_number', { ascending: true });
+
+    if (!pErr && pData) {
+      if (pData.length > 0) {
+        db.participants = pData.map((row: any) => ({
+          id: row.id,
+          ticketNumber: Number(row.ticket_number ?? row.ticketNumber ?? 1000),
+          name: String(row.name || ''),
+          phone: String(row.phone || ''),
+          registeredAt: String(row.registered_at ?? row.registeredAt ?? row.created_at ?? new Date().toISOString()),
+          hasWon: Boolean(row.has_won ?? row.hasWon ?? false),
+          wonAt: row.won_at ?? row.wonAt ?? undefined,
+          prizeWon: row.prize_won ?? row.prizeWon ?? undefined,
+        }));
+
+        const maxTicket = db.participants.reduce((max, p) => Math.max(max, p.ticketNumber || 0), 1000);
+        db.nextTicketNumber = maxTicket + 1;
+        saveDb();
+      } else if (db.participants.length > 0) {
+        // If Supabase table is empty but local had participants, seed Supabase with local participants
+        console.log(`[Supabase] Seeding ${db.participants.length} local participants into Supabase...`);
+        const rows = db.participants.map((p) => ({
+          id: p.id,
+          ticket_number: p.ticketNumber,
+          ticketNumber: p.ticketNumber,
+          name: p.name,
+          phone: p.phone,
+          registered_at: p.registeredAt,
+          registeredAt: p.registeredAt,
+          has_won: p.hasWon,
+          hasWon: p.hasWon,
+          won_at: p.wonAt || null,
+          wonAt: p.wonAt || null,
+          prize_won: p.prizeWon || null,
+          prizeWon: p.prizeWon || null,
+        }));
+        await supabase.from('participants').upsert(rows);
+      }
+    } else if (pErr) {
+      console.warn('[Supabase] Participants query notice:', pErr.message);
+    }
+
+    // 2. Fetch prizes from Supabase table 'prizes'
+    const { data: prData, error: prErr } = await supabase
+      .from('prizes')
+      .select('*')
+      .order('created_at', { ascending: true });
+
+    if (!prErr && prData && prData.length > 0) {
+      db.settings.prizes = prData.map((row: any) => ({
+        id: row.id,
+        title: String(row.title || ''),
+        quantity: Number(row.quantity ?? 1),
+        icon: String(row.icon || 'Trophy'),
+        color: String(row.color || '#F59E0B'),
+      }));
+    }
+
+    // 3. Fetch giveaway_settings from Supabase table 'giveaway_settings'
+    const { data: sData, error: sErr } = await supabase
+      .from('giveaway_settings')
+      .select('*')
+      .eq('id', 'default')
+      .maybeSingle();
+
+    if (!sErr && sData) {
+      if (sData.store_name) {
+        db.settings.storeName = (sData.store_name === 'سحب وقيف اوي المتاجر' || !sData.store_name.trim()) ? 'متجر الرعد' : sData.store_name;
+        if (sData.store_name === 'سحب وقيف اوي المتاجر') {
+          supabase.from('giveaway_settings').update({ store_name: 'متجر الرعد' }).eq('id', 'default').then();
+        }
+      }
+      if (sData.store_tagline) db.settings.storeTagline = sData.store_tagline;
+      if (sData.giveaway_title) db.settings.giveawayTitle = sData.giveaway_title;
+      if (sData.giveaway_description) db.settings.giveawayDescription = sData.giveaway_description;
+      if (sData.logo_url) db.settings.logoUrl = sData.logo_url;
+      if (sData.theme_id) db.settings.themeId = sData.theme_id;
+      if (typeof sData.is_registration_open === 'boolean') db.settings.isRegistrationOpen = sData.is_registration_open;
+      if (typeof sData.allow_duplicates === 'boolean') db.settings.allowDuplicates = sData.allow_duplicates;
+      if (typeof sData.mask_phone_numbers === 'boolean') db.settings.maskPhoneNumbers = sData.mask_phone_numbers;
+      if (sData.admin_pin) db.settings.adminPin = sData.admin_pin;
+
+      if (sData.current_prize && (sData.current_prize.title || sData.current_prize.details)) {
+        db.settings.currentPrize = {
+          title: sData.current_prize.title || db.settings.currentPrize.title,
+          details: sData.current_prize.details || db.settings.currentPrize.details,
+        };
+      }
+
+      if (sData.wheel_state) {
+        db.settings.wheelState = {
+          isSpinning: Boolean(sData.wheel_state.isSpinning),
+          winnerName: sData.wheel_state.winnerName || '',
+          winnerId: sData.wheel_state.winnerId || '',
+          winnerTicket: sData.wheel_state.winnerTicket ? Number(sData.wheel_state.winnerTicket) : undefined,
+          prizeTitle: sData.wheel_state.prizeTitle || '',
+          spunAt: sData.wheel_state.spunAt || '',
+        };
+      }
+      saveDb();
+    } else {
+      // Upsert current settings to Supabase
+      await supabase.from('giveaway_settings').upsert({
+        id: 'default',
+        store_name: db.settings.storeName,
+        store_tagline: db.settings.storeTagline,
+        giveaway_title: db.settings.giveawayTitle,
+        giveaway_description: db.settings.giveawayDescription,
+        theme_id: db.settings.themeId,
+        is_registration_open: db.settings.isRegistrationOpen,
+        allow_duplicates: db.settings.allowDuplicates,
+        mask_phone_numbers: db.settings.maskPhoneNumbers,
+        admin_pin: db.settings.adminPin || 'Alrneem9@1',
+        current_prize: db.settings.currentPrize,
+        wheel_state: db.settings.wheelState,
+        updated_at: new Date().toISOString(),
+      });
+    }
+
+    console.log(`[Supabase] Cloud database synced: ${db.participants.length} participants, ${db.settings.prizes?.length || 0} prizes.`);
+  } catch (err) {
+    console.error('[Supabase] Sync error, operating with local fallback cache:', err);
+  }
+}
+
+async function syncParticipantToSupabase(p: Participant) {
+  try {
+    await supabase.from('participants').upsert({
+      id: p.id,
+      ticket_number: p.ticketNumber,
+      ticketNumber: p.ticketNumber,
+      name: p.name,
+      phone: p.phone,
+      registered_at: p.registeredAt,
+      registeredAt: p.registeredAt,
+      has_won: p.hasWon,
+      hasWon: p.hasWon,
+      won_at: p.wonAt || null,
+      wonAt: p.wonAt || null,
+      prize_won: p.prizeWon || null,
+      prizeWon: p.prizeWon || null,
+    });
+  } catch (err) {
+    console.error('[Supabase] Failed to sync participant:', err);
+  }
+}
+
+async function deleteParticipantFromSupabase(id: string) {
+  try {
+    await supabase.from('participants').delete().eq('id', id);
+  } catch (err) {
+    console.error('[Supabase] Failed to delete participant from cloud:', err);
+  }
+}
+
+async function clearParticipantsInSupabase(type: string) {
+  try {
+    if (type === 'winners') {
+      await supabase.from('participants').update({
+        has_won: false,
+        hasWon: false,
+        won_at: null,
+        wonAt: null,
+        prize_won: null,
+        prizeWon: null,
+      }).neq('id', '___');
+    } else if (type === 'non-winners') {
+      await supabase.from('participants').delete().eq('has_won', false);
+    } else {
+      await supabase.from('participants').delete().neq('id', '___');
+    }
+  } catch (err) {
+    console.error('[Supabase] Failed to clear participants in cloud:', err);
+  }
+}
+
+async function syncPrizeToSupabase(prize: Prize) {
+  try {
+    await supabase.from('prizes').upsert({
+      id: prize.id,
+      title: prize.title,
+      quantity: prize.quantity,
+      icon: prize.icon || 'Trophy',
+      color: prize.color || '#F59E0B',
+    });
+  } catch (err) {
+    console.error('[Supabase] Failed to sync prize to cloud:', err);
+  }
+}
+
+async function deletePrizeFromSupabase(id: string) {
+  try {
+    await supabase.from('prizes').delete().eq('id', id);
+  } catch (err) {
+    console.error('[Supabase] Failed to delete prize from cloud:', err);
+  }
+}
+
+async function syncSettingsToSupabase() {
+  try {
+    await supabase.from('giveaway_settings').upsert({
+      id: 'default',
+      store_name: db.settings.storeName,
+      store_tagline: db.settings.storeTagline,
+      giveaway_title: db.settings.giveawayTitle,
+      giveaway_description: db.settings.giveawayDescription,
+      logo_url: db.settings.logoUrl,
+      theme_id: db.settings.themeId,
+      is_registration_open: db.settings.isRegistrationOpen,
+      allow_duplicates: db.settings.allowDuplicates,
+      mask_phone_numbers: db.settings.maskPhoneNumbers,
+      admin_pin: db.settings.adminPin,
+      current_prize: db.settings.currentPrize,
+      wheel_state: db.settings.wheelState,
+      custom_colors: db.settings.customColors || {},
+      raw_settings: db.settings,
+      updated_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('[Supabase] Failed to sync settings to cloud:', err);
+  }
+}
+
+async function syncWheelStateToSupabase() {
+  try {
+    await supabase.from('giveaway_settings').upsert({
+      id: 'default',
+      wheel_state: db.settings.wheelState,
+      updated_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('[Supabase] Failed to sync wheel_state to cloud:', err);
+  }
+}
+
+// Admin Auth Middleware
+function checkAdminAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const authHeader = req.headers['x-admin-password'] || req.headers['authorization'];
+  const pass = (authHeader || '').toString().replace(/^Bearer\s+/i, '').trim();
+
+  if (pass === ADMIN_PASSWORD) {
+    return next();
+  }
+  return res.status(401).json({
+    success: false,
+    error: 'غير مصرح: يجب تسجيل الدخول بكلمة مرور المشرف الصحيحة',
+  });
+}
+
 async function startServer() {
   const app = express();
   app.use(express.json({ limit: '15mb' }));
 
-  // Enable CORS headers for cross-origin and iframe requests
+  // Initialize Supabase sync on server start
+  await syncFromSupabase();
+
+  // Enable CORS headers
   app.use((_req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-admin-password');
     if (_req.method === 'OPTIONS') {
       return res.sendStatus(200);
     }
     next();
   });
 
-  // --- API ROUTES ---
+  // --- PUBLIC APIS ---
 
   // Health check
   app.get('/api/health', (_req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
 
-  // Get Store Settings
-  app.get('/api/settings', (_req, res) => {
-    res.json({
-      success: true,
-      settings: db.settings,
-      stats: {
-        totalParticipants: db.participants.length,
-        totalWinners: db.participants.filter((p) => p.hasWon).length,
-      },
-    });
-  });
-
-  // Update Store Settings
-  app.post('/api/settings', (req, res) => {
+  // Supabase Cloud Status
+  app.get('/api/supabase/status', async (_req, res) => {
     try {
-      const updated = req.body;
-      db.settings = {
-        ...db.settings,
-        ...updated,
-      };
-      saveDb();
-      res.json({ success: true, settings: db.settings });
-    } catch (err) {
-      res.status(500).json({ success: false, error: 'فشل في حفظ إعدادات المتجر' });
+      const { count: pCount, error: pErr } = await supabase.from('participants').select('*', { count: 'exact', head: true });
+      const { count: prCount, error: prErr } = await supabase.from('prizes').select('*', { count: 'exact', head: true });
+      const { data: sData, error: sErr } = await supabase.from('giveaway_settings').select('id, updated_at').eq('id', 'default').maybeSingle();
+
+      res.json({
+        success: true,
+        connected: !pErr && !prErr && !sErr,
+        supabaseUrl: SUPABASE_URL,
+        participantsCount: pCount ?? db.participants.length,
+        prizesCount: prCount ?? (db.settings.prizes?.length || 0),
+        settingsSynced: Boolean(sData),
+      });
+    } catch (err: any) {
+      res.json({
+        success: false,
+        connected: false,
+        error: err.message,
+      });
     }
   });
 
-  // Get Participants List
-  app.get('/api/participants', (_req, res) => {
+  // Public Giveaway & Spectator State (Strict privacy: NO phone numbers or participant personal info)
+  app.get('/api/public/giveaway', (_req, res) => {
+    const eligibleParticipants = db.participants.filter(p => !p.hasWon);
+    const namesToSpin = eligibleParticipants.length > 0
+      ? eligibleParticipants.map(p => p.name)
+      : db.participants.map(p => p.name);
+
     res.json({
       success: true,
-      participants: db.participants,
+      currentPrize: db.settings.currentPrize || DEFAULT_STATE.settings.currentPrize,
+      wheelState: db.settings.wheelState || DEFAULT_STATE.settings.wheelState,
+      totalParticipants: db.participants.length,
+      participantNames: namesToSpin, // Only names for wheel spinning, NO phones
+      isRegistrationOpen: db.settings.isRegistrationOpen,
+      storeName: db.settings.storeName,
+      storeTagline: db.settings.storeTagline,
+      themeId: db.settings.themeId,
     });
   });
 
-  // Register New Participant
-  app.post('/api/participants', (req, res) => {
+  // Register New Participant (Strictly checks Full Name & Tribe + exactly 8-digit Phone)
+  app.post('/api/participants', async (req, res) => {
     try {
       const { name, phone } = req.body;
 
       if (!db.settings.isRegistrationOpen) {
         return res.status(403).json({
           success: false,
-          error: 'عذراً، باب التسجيل في السحب مغلق حالياً من قبل إدارة المتجر.',
+          error: 'عذراً، تم إغلاق باب التسجيل في السحب والاكتفاء بالعدد الموجود.',
         });
       }
 
       if (!name || typeof name !== 'string' || name.trim().length < 2) {
         return res.status(400).json({
           success: false,
-          error: 'يرجى إدخال الاسم الكريم بشكل صحيح (حرفين على الأقل).',
+          error: 'يرجى إدخال الاسم والقبيلة بشكل كامل.',
         });
       }
 
-      const cleanPhone = (phone || '').toString().replace(/[\s\-\(\)]/g, '').trim();
-      if (!cleanPhone || cleanPhone.length < 7) {
+      const phoneCheck = normalizeAndValidatePhone(phone);
+      if (!phoneCheck.isValid) {
         return res.status(400).json({
           success: false,
-          error: 'يرجى إدخال رقم هاتف صحيح للتواصل في حال الفوز.',
+          error: phoneCheck.error || 'رقم الهاتف يجب أن يتكون من 8 أرقام فقط.',
         });
       }
 
-      // Check duplicates if not allowed
+      const cleanPhone = phoneCheck.normalized;
+
+      // Check duplicates
       if (!db.settings.allowDuplicates) {
         const exists = db.participants.some(
-          (p) => p.phone.replace(/[\s\-\(\)]/g, '') === cleanPhone
+          (p) => p.phone === cleanPhone
         );
         if (exists) {
           return res.status(409).json({
@@ -260,82 +576,452 @@ async function startServer() {
       db.participants.push(newParticipant);
       saveDb();
 
+      // Cloud sync to Supabase
+      syncParticipantToSupabase(newParticipant);
+
       res.json({
         success: true,
-        participant: newParticipant,
+        participant: {
+          id: newParticipant.id,
+          ticketNumber: newParticipant.ticketNumber,
+          name: newParticipant.name,
+          phone: newParticipant.phone,
+          registeredAt: newParticipant.registeredAt,
+        },
         totalEntries: db.participants.length,
       });
-    } catch (err) {
+    } catch {
       res.status(500).json({ success: false, error: 'حدث خطأ أثناء تسجيل المشارك' });
     }
   });
 
-  // Seed Realistic Sample Participants (Convenient for Host Testing)
-  app.post('/api/participants/seed', (_req, res) => {
+  // --- ADMIN AUTHENTICATION ---
+
+  // Admin Login
+  app.post('/api/admin/login', (req, res) => {
+    const { password } = req.body;
+    const inputPass = (password || '').toString().trim();
+
+    if (inputPass === ADMIN_PASSWORD) {
+      return res.json({ success: true, message: 'تم تسجيل الدخول بنجاح' });
+    }
+    return res.status(401).json({ success: false, error: 'كلمة المرور غير صحيحة! يرجى التأكد والمحاولة مجدداً.' });
+  });
+
+  // Verify PIN (kept for backward compatibility)
+  app.post('/api/admin/verify', (req, res) => {
+    const { pin } = req.body;
+    const input = (pin || '').toString().trim();
+    if (input === ADMIN_PASSWORD || input === (db.settings.adminPin || '1234')) {
+      return res.json({ success: true });
+    }
+    return res.status(401).json({ success: false, error: 'رمز الدخول غير صحيح' });
+  });
+
+  // --- ADMIN PROTECTED ROUTES ---
+
+  // Admin: Get Full Participants List (Table with Name & Tribe, 8-digit Phone, Timestamp)
+  app.get('/api/admin/participants', checkAdminAuth, (_req, res) => {
+    res.json({
+      success: true,
+      participants: db.participants,
+      totalCount: db.participants.length,
+      winnersCount: db.participants.filter(p => p.hasWon).length,
+    });
+  });
+
+  // Admin: Update Current Prize Title & Details
+  app.post('/api/admin/prize', checkAdminAuth, (req, res) => {
     try {
-      const sampleNames = [
-        'خالد وليد المنصور',
-        'مها ناصر السبيعي',
-        'تركي فهد الرويلي',
-        'أروى صالح البلوشي',
-        'محمد إبراهيم الزهراني',
-        'هدى يوسف المالكي',
-        'ماجد حمود العنزي',
-        'فاطمة سعيد الشهري',
-      ];
+      const { title, details } = req.body;
 
-      sampleNames.forEach((name, i) => {
-        const ticketNumber = db.nextTicketNumber++;
-        const randomDigits = Math.floor(1000000 + Math.random() * 9000000);
-        db.participants.push({
-          id: `p-${Date.now()}-${i}`,
-          ticketNumber,
-          name,
-          phone: `05${randomDigits}`,
-          registeredAt: new Date().toISOString(),
-          hasWon: false,
-        });
-      });
-
+      db.settings.currentPrize = {
+        title: (title || '').toString().trim(),
+        details: (details || '').toString().trim(),
+      };
       saveDb();
+
+      // Sync settings and prize to Supabase
+      syncSettingsToSupabase();
+      if (db.settings.currentPrize.title) {
+        syncPrizeToSupabase({
+          id: 'current-featured-prize',
+          title: db.settings.currentPrize.title,
+          quantity: 1,
+          icon: 'Trophy',
+          color: '#F59E0B',
+        });
+      }
+
       res.json({
         success: true,
-        message: 'تم إضافة مشاركين تجريبيين بنجاح',
-        participants: db.participants,
+        currentPrize: db.settings.currentPrize,
+        message: 'تم حفظ وتحديث الجائزة الحالية بنجاح ومزامنتها سحابياً مع Supabase',
       });
     } catch {
-      res.status(500).json({ success: false, error: 'فشل في إضافة مشاركين' });
+      res.status(500).json({ success: false, error: 'فشل في حفظ بيانات الجائزة' });
     }
   });
 
-  // Delete Single Participant
-  app.delete('/api/participants/:id', (req, res) => {
-    const { id } = req.params;
-    db.participants = db.participants.filter((p) => p.id !== id);
-    saveDb();
-    res.json({ success: true, remaining: db.participants.length });
+  // Admin: Manage Prizes in Supabase (table 'prizes')
+  app.get('/api/admin/prizes', checkAdminAuth, async (_req, res) => {
+    try {
+      const { data, error } = await supabase.from('prizes').select('*').order('created_at', { ascending: true });
+      if (!error && data && data.length > 0) {
+        const mapped = data.map((row: any) => ({
+          id: row.id,
+          title: row.title || '',
+          quantity: Number(row.quantity || 1),
+          icon: row.icon || 'Trophy',
+          color: row.color || '#F59E0B',
+        }));
+        db.settings.prizes = mapped;
+        saveDb();
+        return res.json({ success: true, prizes: mapped });
+      }
+      res.json({ success: true, prizes: db.settings.prizes || [] });
+    } catch {
+      res.json({ success: true, prizes: db.settings.prizes || [] });
+    }
   });
 
-  // Clear Participants
-  app.post('/api/participants/clear', (req, res) => {
+  app.post('/api/admin/prizes', checkAdminAuth, async (req, res) => {
+    try {
+      const { id, title, quantity, icon, color } = req.body;
+      const prizeId = id || `prize-${Date.now()}`;
+      const newPrize: Prize = {
+        id: prizeId,
+        title: (title || '').toString().trim(),
+        quantity: Number(quantity || 1),
+        icon: icon || 'Trophy',
+        color: color || '#F59E0B',
+      };
+
+      if (!db.settings.prizes) db.settings.prizes = [];
+      const idx = db.settings.prizes.findIndex(p => p.id === prizeId);
+      if (idx >= 0) {
+        db.settings.prizes[idx] = newPrize;
+      } else {
+        db.settings.prizes.push(newPrize);
+      }
+      saveDb();
+
+      // Cloud sync
+      await syncPrizeToSupabase(newPrize);
+
+      res.json({ success: true, prize: newPrize });
+    } catch {
+      res.status(500).json({ success: false, error: 'فشل حفظ الجائزة في قاعدة البيانات' });
+    }
+  });
+
+  app.delete('/api/admin/prizes/:id', checkAdminAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      db.settings.prizes = (db.settings.prizes || []).filter(p => p.id !== id);
+      saveDb();
+
+      // Cloud delete
+      await deletePrizeFromSupabase(id);
+
+      res.json({ success: true, message: 'تم حذف الجائزة من قاعدة البيانات السحابية' });
+    } catch {
+      res.status(500).json({ success: false, error: 'فشل حذف الجائزة' });
+    }
+  });
+
+  // Admin: Toggle or Set Registration Status (Close registration and cap at current count)
+  app.post('/api/admin/toggle-registration', checkAdminAuth, (req, res) => {
+    try {
+      const { isOpen } = req.body;
+      if (typeof isOpen === 'boolean') {
+        db.settings.isRegistrationOpen = isOpen;
+      } else {
+        db.settings.isRegistrationOpen = !db.settings.isRegistrationOpen;
+      }
+      saveDb();
+      syncSettingsToSupabase();
+
+      res.json({
+        success: true,
+        isRegistrationOpen: db.settings.isRegistrationOpen,
+        totalParticipants: db.participants.length,
+        message: db.settings.isRegistrationOpen
+          ? 'تم فتح باب التسجيل للمشاركين بنجاح'
+          : `تم إغلاق باب التسجيل بنجاح والاكتفاء بالعدد الحالي (${db.participants.length} مشارك)`,
+      });
+    } catch {
+      res.status(500).json({ success: false, error: 'فشل تغيير حالة التسجيل' });
+    }
+  });
+
+  // Admin: Trigger Wheel Spin & Pick Random Winner
+  app.post('/api/admin/spin', checkAdminAuth, (req, res) => {
+    try {
+      const { prizeTitle } = req.body;
+      const currentPrizeName = prizeTitle || db.settings.currentPrize?.title || 'الجائزة الكبرى';
+
+      // Pick from eligible participants (haven't won yet)
+      let eligible = db.participants.filter(p => !p.hasWon);
+      if (eligible.length === 0) {
+        if (db.participants.length === 0) {
+          return res.status(400).json({ success: false, error: 'لا يوجد مشاركون مسجلون في السحب حتى الآن' });
+        }
+        // If all have won, pick from all participants
+        eligible = db.participants;
+      }
+
+      const randomIndex = Math.floor(Math.random() * eligible.length);
+      const winner = eligible[randomIndex];
+
+      winner.hasWon = true;
+      winner.wonAt = new Date().toISOString();
+      winner.prizeWon = currentPrizeName;
+
+      // Update wheel state broadcasted to all spectators
+      db.settings.wheelState = {
+        isSpinning: true,
+        winnerName: winner.name,
+        winnerId: winner.id,
+        winnerTicket: winner.ticketNumber,
+        prizeTitle: currentPrizeName,
+        spunAt: new Date().toISOString(),
+      };
+
+      saveDb();
+
+      // Cloud sync winner and wheel state to Supabase
+      syncParticipantToSupabase(winner);
+      syncWheelStateToSupabase();
+
+      res.json({
+        success: true,
+        winner,
+        wheelState: db.settings.wheelState,
+        remainingEligible: db.participants.filter(p => !p.hasWon).length,
+      });
+    } catch {
+      res.status(500).json({ success: false, error: 'فشل في إجراء السحب' });
+    }
+  });
+
+  // Admin: Reset Wheel State (Clears winner announcement and prepares for next spin)
+  app.post('/api/admin/reset-wheel', checkAdminAuth, (_req, res) => {
+    db.settings.wheelState = {
+      isSpinning: false,
+      winnerName: '',
+      prizeTitle: '',
+      spunAt: '',
+    };
+    saveDb();
+    syncWheelStateToSupabase();
+
+    res.json({
+      success: true,
+      wheelState: db.settings.wheelState,
+      message: 'تم إعادة تعيين حالة العجلة ومزامنتها بنجاح',
+    });
+  });
+
+  // Admin: Add Participant Manually
+  app.post('/api/admin/participants/add', checkAdminAuth, (req, res) => {
+    try {
+      const { name, phone } = req.body;
+      if (!name || typeof name !== 'string' || name.trim().length < 2) {
+        return res.status(400).json({ success: false, error: 'يرجى إدخال الاسم والقبيلة بشكل صحيح' });
+      }
+
+      const phoneCheck = normalizeAndValidatePhone(phone);
+      if (!phoneCheck.isValid) {
+        return res.status(400).json({ success: false, error: phoneCheck.error || 'رقم الهاتف يجب أن يتكون من 8 أرقام فقط' });
+      }
+
+      const ticketNumber = db.nextTicketNumber++;
+      const newParticipant: Participant = {
+        id: `p-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        ticketNumber,
+        name: name.trim(),
+        phone: phoneCheck.normalized,
+        registeredAt: new Date().toISOString(),
+        hasWon: false,
+      };
+
+      db.participants.push(newParticipant);
+      saveDb();
+
+      // Cloud sync to Supabase
+      syncParticipantToSupabase(newParticipant);
+
+      res.json({
+        success: true,
+        participant: newParticipant,
+        totalParticipants: db.participants.length,
+      });
+    } catch {
+      res.status(500).json({ success: false, error: 'فشل في إضافة المشارك' });
+    }
+  });
+
+  // Admin: Clear Participants
+  app.post('/api/admin/participants/clear', checkAdminAuth, (req, res) => {
     const { type } = req.body; // 'all' or 'non-winners' or 'winners'
-    if (type === 'all') {
-      db.participants = [];
-    } else if (type === 'non-winners') {
-      db.participants = db.participants.filter((p) => p.hasWon);
-    } else if (type === 'winners') {
+    if (type === 'winners') {
       db.participants.forEach((p) => {
         p.hasWon = false;
         delete p.wonAt;
         delete p.prizeWon;
       });
+    } else if (type === 'non-winners') {
+      db.participants = db.participants.filter((p) => p.hasWon);
+    } else {
+      db.participants = [];
     }
+    // Also reset wheel
+    db.settings.wheelState = {
+      isSpinning: false,
+      winnerName: '',
+      prizeTitle: '',
+      spunAt: '',
+    };
     saveDb();
+
+    // Cloud sync to Supabase
+    clearParticipantsInSupabase(type);
+    syncWheelStateToSupabase();
+
+    res.json({
+      success: true,
+      participants: db.participants,
+      totalParticipants: db.participants.length,
+    });
+  });
+
+  // Admin: Seed Realistic 8-digit Participants
+  app.post('/api/admin/participants/seed', checkAdminAuth, (_req, res) => {
+    try {
+      const sampleParticipants = [
+        { name: 'سالم بن ناصر الحارثي', phone: '91234567' },
+        { name: 'أحمد بن سعيد البلوشي', phone: '79876543' },
+        { name: 'فاطمة بنت سالم المعمرية', phone: '98765432' },
+        { name: 'خالد بن خلفان الريامي', phone: '71239876' },
+        { name: 'مريم بنت عبدالله الشحية', phone: '95544332' },
+        { name: 'محمد بن خميس الكعبي', phone: '78899001' },
+        { name: 'عائشة بنت هلال الحوسنية', phone: '96655443' },
+        { name: 'فيصل بن حمد الدرعي', phone: '72233445' },
+        { name: 'روان بنت ناصر الوهيبية', phone: '93344556' },
+        { name: 'عبدالعزيز بن راشد العامري', phone: '74455667' },
+      ];
+
+      sampleParticipants.forEach((sample) => {
+        const ticketNumber = db.nextTicketNumber++;
+        const newPart: Participant = {
+          id: `p-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          ticketNumber,
+          name: sample.name,
+          phone: sample.phone,
+          registeredAt: new Date().toISOString(),
+          hasWon: false,
+        };
+        db.participants.push(newPart);
+        syncParticipantToSupabase(newPart);
+      });
+
+      saveDb();
+      res.json({
+        success: true,
+        participants: db.participants,
+        totalParticipants: db.participants.length,
+      });
+    } catch {
+      res.status(500).json({ success: false, error: 'فشل إضافة المشاركين التجريبيين' });
+    }
+  });
+
+  // Admin: Delete Single Participant
+  app.delete('/api/admin/participants/:id', checkAdminAuth, (req, res) => {
+    const { id } = req.params;
+    db.participants = db.participants.filter((p) => p.id !== id);
+    saveDb();
+    deleteParticipantFromSupabase(id);
+    res.json({ success: true, remaining: db.participants.length });
+  });
+
+  // Admin: Reset Winners flag
+  app.post('/api/admin/reset-winners', checkAdminAuth, (_req, res) => {
+    db.participants.forEach((p) => {
+      p.hasWon = false;
+      delete p.wonAt;
+      delete p.prizeWon;
+    });
+    db.settings.wheelState = {
+      isSpinning: false,
+      winnerName: '',
+      prizeTitle: '',
+      spunAt: '',
+    };
+    saveDb();
+    clearParticipantsInSupabase('winners');
+    syncWheelStateToSupabase();
+
     res.json({ success: true, participants: db.participants });
   });
 
-  // Record a Winner from Wheel of Fortune
-  app.post('/api/draw/winner', (req, res) => {
+  // --- SETTINGS APIS (Admin or Read-Only) ---
+
+  // Get Settings
+  app.get('/api/settings', (_req, res) => {
+    res.json({
+      success: true,
+      settings: db.settings,
+      stats: {
+        totalParticipants: db.participants.length,
+        totalWinners: db.participants.filter((p) => p.hasWon).length,
+      },
+    });
+  });
+
+  // Update Settings
+  app.post('/api/settings', checkAdminAuth, (req, res) => {
+    try {
+      const updated = req.body;
+      db.settings = {
+        ...db.settings,
+        ...updated,
+        adminPassword: ADMIN_PASSWORD,
+      };
+      saveDb();
+      syncSettingsToSupabase();
+
+      res.json({ success: true, settings: db.settings });
+    } catch {
+      res.status(500).json({ success: false, error: 'فشل في حفظ إعدادات السحب' });
+    }
+  });
+
+  // Participants endpoint (Privacy protected: if not admin, mask phone numbers)
+  app.get('/api/participants', (req, res) => {
+    const authHeader = req.headers['x-admin-password'] || req.headers['authorization'];
+    const pass = (authHeader || '').toString().replace(/^Bearer\s+/i, '').trim();
+    const isAdmin = pass === ADMIN_PASSWORD;
+
+    if (isAdmin) {
+      return res.json({ success: true, participants: db.participants });
+    }
+
+    // Public / Spectator request: Mask phone numbers completely or only return minimal data for privacy
+    const masked = db.participants.map((p) => ({
+      id: p.id,
+      ticketNumber: p.ticketNumber,
+      name: p.name,
+      phone: p.phone ? `${p.phone.slice(0, 2)}****${p.phone.slice(-2)}` : '',
+      registeredAt: p.registeredAt,
+      hasWon: p.hasWon,
+    }));
+    res.json({ success: true, participants: masked });
+  });
+
+  // Record winner (legacy support)
+  app.post('/api/draw/winner', checkAdminAuth, (req, res) => {
     try {
       const { participantId, prizeWon } = req.body;
       const participant = db.participants.find((p) => p.id === participantId);
@@ -346,34 +1032,58 @@ async function startServer() {
 
       participant.hasWon = true;
       participant.wonAt = new Date().toISOString();
-      participant.prizeWon = prizeWon || 'جائزة السحب الكبرى';
+      participant.prizeWon = prizeWon || db.settings.currentPrize?.title || 'جائزة السحب';
+
+      db.settings.wheelState = {
+        isSpinning: true,
+        winnerName: participant.name,
+        winnerId: participant.id,
+        winnerTicket: participant.ticketNumber,
+        prizeTitle: participant.prizeWon,
+        spunAt: new Date().toISOString(),
+      };
 
       saveDb();
+      syncParticipantToSupabase(participant);
+      syncWheelStateToSupabase();
 
       res.json({
         success: true,
         winner: participant,
+        wheelState: db.settings.wheelState,
       });
     } catch {
       res.status(500).json({ success: false, error: 'فشل تسجيل الفائز' });
     }
   });
 
-  // Reset Winners to participate again
-  app.post('/api/draw/reset-winners', (_req, res) => {
+  // Reset winners (legacy support)
+  app.post('/api/draw/reset-winners', checkAdminAuth, (_req, res) => {
     db.participants.forEach((p) => {
       p.hasWon = false;
       delete p.wonAt;
       delete p.prizeWon;
     });
+    db.settings.wheelState = {
+      isSpinning: false,
+      winnerName: '',
+      prizeTitle: '',
+      spunAt: '',
+    };
     saveDb();
+    clearParticipantsInSupabase('winners');
+    syncWheelStateToSupabase();
+
     res.json({ success: true, participants: db.participants });
   });
 
   // --- VITE MIDDLEWARE / STATIC SERVING ---
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: false,
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);

@@ -61,8 +61,8 @@ export default defineConfig(() => {
       target: ['es2018', 'safari13', 'ios13'],
     },
     server: {
-      hmr: process.env.DISABLE_HMR !== 'true',
-      watch: process.env.DISABLE_HMR === 'true' ? null : {},
+      hmr: false,
+      watch: null,
     },
   };
 });
