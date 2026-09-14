@@ -138,7 +138,7 @@ export async function getSettingsFromSupabase(): Promise<{
     };
 
     const settings: Partial<StoreSettings> = {
-      storeName: data.store_name || 'سحب وقيف اوي المتاجر',
+      storeName: (data.store_name && data.store_name !== 'سحب وقيف اوي المتاجر') ? data.store_name : 'متجر الرعد',
       storeTagline: data.store_tagline || 'سحب حصري وعجلة الحظ الكبرى للمشاركين الكرام',
       giveawayTitle: data.giveaway_title || 'السحب الكبير وعجلة الحظ',
       giveawayDescription: data.giveaway_description || '',

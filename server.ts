@@ -195,35 +195,126 @@ function saveDb() {
 
 // --- SUPABASE CLOUD PERSISTENCE HELPERS ---
 
-async function syncFromSupabase() {
-  try {
-    console.log('[Supabase] Initializing sync with cloud database...');
+function mapParticipantRow(row: any): Participant {
+  return {
+    id: row.id,
+    ticketNumber: Number(row.ticket_number ?? row.ticketNumber ?? 1000),
+    name: String(row.name || ''),
+    phone: String(row.phone || ''),
+    registeredAt: String(row.registered_at ?? row.registeredAt ?? row.created_at ?? new Date().toISOString()),
+    hasWon: Boolean(row.has_won ?? row.hasWon ?? false),
+    wonAt: row.won_at ?? row.wonAt ?? undefined,
+    prizeWon: row.prize_won ?? row.prizeWon ?? undefined,
+  };
+}
 
-    // 1. Fetch participants from Supabase table 'participants'
-    const { data: pData, error: pErr } = await supabase
+function mapPrizeRow(row: any): Prize {
+  return {
+    id: row.id,
+    title: String(row.title || ''),
+    quantity: Number(row.quantity ?? 1),
+    icon: String(row.icon || 'Trophy'),
+    color: String(row.color || '#F59E0B'),
+  };
+}
+
+async function fetchCloudParticipants(): Promise<Participant[]> {
+  try {
+    const { data, error } = await supabase
       .from('participants')
       .select('*')
       .order('ticket_number', { ascending: true });
 
-    if (!pErr && pData) {
-      if (pData.length > 0) {
-        db.participants = pData.map((row: any) => ({
-          id: row.id,
-          ticketNumber: Number(row.ticket_number ?? row.ticketNumber ?? 1000),
-          name: String(row.name || ''),
-          phone: String(row.phone || ''),
-          registeredAt: String(row.registered_at ?? row.registeredAt ?? row.created_at ?? new Date().toISOString()),
-          hasWon: Boolean(row.has_won ?? row.hasWon ?? false),
-          wonAt: row.won_at ?? row.wonAt ?? undefined,
-          prizeWon: row.prize_won ?? row.prizeWon ?? undefined,
-        }));
+    if (!error && data) {
+      db.participants = data.map(mapParticipantRow);
+      const maxTicket = db.participants.reduce((max, p) => Math.max(max, p.ticketNumber || 0), 1000);
+      db.nextTicketNumber = maxTicket + 1;
+      saveDb();
+      return db.participants;
+    }
+  } catch (err) {
+    console.error('[Supabase] Error fetching cloud participants:', err);
+  }
+  return db.participants;
+}
 
-        const maxTicket = db.participants.reduce((max, p) => Math.max(max, p.ticketNumber || 0), 1000);
-        db.nextTicketNumber = maxTicket + 1;
-        saveDb();
-      } else if (db.participants.length > 0) {
-        // If Supabase table is empty but local had participants, seed Supabase with local participants
-        console.log(`[Supabase] Seeding ${db.participants.length} local participants into Supabase...`);
+async function fetchCloudSettings(): Promise<StoreSettings> {
+  try {
+    const { data, error } = await supabase
+      .from('giveaway_settings')
+      .select('*')
+      .eq('id', 'default')
+      .maybeSingle();
+
+    if (!error && data) {
+      if (data.store_name) {
+        db.settings.storeName = (data.store_name === 'سحب وقيف اوي المتاجر' || !data.store_name.trim()) ? 'متجر الرعد' : data.store_name;
+      }
+      if (data.store_tagline) db.settings.storeTagline = data.store_tagline;
+      if (data.giveaway_title) db.settings.giveawayTitle = data.giveaway_title;
+      if (data.giveaway_description) db.settings.giveawayDescription = data.giveaway_description;
+      if (data.logo_url) db.settings.logoUrl = data.logo_url;
+      if (data.theme_id) db.settings.themeId = data.theme_id;
+      if (typeof data.is_registration_open === 'boolean') db.settings.isRegistrationOpen = data.is_registration_open;
+      if (typeof data.allow_duplicates === 'boolean') db.settings.allowDuplicates = data.allow_duplicates;
+      if (typeof data.mask_phone_numbers === 'boolean') db.settings.maskPhoneNumbers = data.mask_phone_numbers;
+      if (data.admin_pin) db.settings.adminPin = data.admin_pin;
+      if (data.current_prize && (data.current_prize.title || data.current_prize.details)) {
+        db.settings.currentPrize = {
+          title: data.current_prize.title || db.settings.currentPrize.title,
+          details: data.current_prize.details || db.settings.currentPrize.details,
+        };
+      }
+      if (data.wheel_state) {
+        db.settings.wheelState = {
+          isSpinning: Boolean(data.wheel_state.isSpinning),
+          winnerName: data.wheel_state.winnerName || '',
+          winnerId: data.wheel_state.winnerId || '',
+          winnerTicket: data.wheel_state.winnerTicket ? Number(data.wheel_state.winnerTicket) : undefined,
+          prizeTitle: data.wheel_state.prizeTitle || '',
+          spunAt: data.wheel_state.spunAt || '',
+        };
+      }
+      saveDb();
+    }
+  } catch (err) {
+    console.error('[Supabase] Error fetching cloud settings:', err);
+  }
+  return db.settings;
+}
+
+async function fetchCloudPrizes(): Promise<Prize[]> {
+  try {
+    const { data, error } = await supabase
+      .from('prizes')
+      .select('*')
+      .order('created_at', { ascending: true });
+
+    if (!error && data && data.length > 0) {
+      db.settings.prizes = data.map(mapPrizeRow);
+      saveDb();
+      return db.settings.prizes;
+    }
+  } catch (err) {
+    console.error('[Supabase] Error fetching cloud prizes:', err);
+  }
+  return db.settings.prizes || [];
+}
+
+async function syncFromSupabase() {
+  try {
+    console.log('[Supabase] Initializing sync with cloud database (participants, prizes, settings)...');
+    await Promise.all([
+      fetchCloudParticipants(),
+      fetchCloudPrizes(),
+      fetchCloudSettings(),
+    ]);
+
+    // If Supabase table is empty but local had participants, seed Supabase
+    if (db.participants.length > 0) {
+      const { count } = await supabase.from('participants').select('*', { count: 'exact', head: true });
+      if (count === 0) {
+        console.log(`[Supabase] Seeding ${db.participants.length} initial participants to Supabase...`);
         const rows = db.participants.map((p) => ({
           id: p.id,
           ticket_number: p.ticketNumber,
@@ -241,96 +332,17 @@ async function syncFromSupabase() {
         }));
         await supabase.from('participants').upsert(rows);
       }
-    } else if (pErr) {
-      console.warn('[Supabase] Participants query notice:', pErr.message);
     }
 
-    // 2. Fetch prizes from Supabase table 'prizes'
-    const { data: prData, error: prErr } = await supabase
-      .from('prizes')
-      .select('*')
-      .order('created_at', { ascending: true });
-
-    if (!prErr && prData && prData.length > 0) {
-      db.settings.prizes = prData.map((row: any) => ({
-        id: row.id,
-        title: String(row.title || ''),
-        quantity: Number(row.quantity ?? 1),
-        icon: String(row.icon || 'Trophy'),
-        color: String(row.color || '#F59E0B'),
-      }));
-    }
-
-    // 3. Fetch giveaway_settings from Supabase table 'giveaway_settings'
-    const { data: sData, error: sErr } = await supabase
-      .from('giveaway_settings')
-      .select('*')
-      .eq('id', 'default')
-      .maybeSingle();
-
-    if (!sErr && sData) {
-      if (sData.store_name) {
-        db.settings.storeName = (sData.store_name === 'سحب وقيف اوي المتاجر' || !sData.store_name.trim()) ? 'متجر الرعد' : sData.store_name;
-        if (sData.store_name === 'سحب وقيف اوي المتاجر') {
-          supabase.from('giveaway_settings').update({ store_name: 'متجر الرعد' }).eq('id', 'default').then();
-        }
-      }
-      if (sData.store_tagline) db.settings.storeTagline = sData.store_tagline;
-      if (sData.giveaway_title) db.settings.giveawayTitle = sData.giveaway_title;
-      if (sData.giveaway_description) db.settings.giveawayDescription = sData.giveaway_description;
-      if (sData.logo_url) db.settings.logoUrl = sData.logo_url;
-      if (sData.theme_id) db.settings.themeId = sData.theme_id;
-      if (typeof sData.is_registration_open === 'boolean') db.settings.isRegistrationOpen = sData.is_registration_open;
-      if (typeof sData.allow_duplicates === 'boolean') db.settings.allowDuplicates = sData.allow_duplicates;
-      if (typeof sData.mask_phone_numbers === 'boolean') db.settings.maskPhoneNumbers = sData.mask_phone_numbers;
-      if (sData.admin_pin) db.settings.adminPin = sData.admin_pin;
-
-      if (sData.current_prize && (sData.current_prize.title || sData.current_prize.details)) {
-        db.settings.currentPrize = {
-          title: sData.current_prize.title || db.settings.currentPrize.title,
-          details: sData.current_prize.details || db.settings.currentPrize.details,
-        };
-      }
-
-      if (sData.wheel_state) {
-        db.settings.wheelState = {
-          isSpinning: Boolean(sData.wheel_state.isSpinning),
-          winnerName: sData.wheel_state.winnerName || '',
-          winnerId: sData.wheel_state.winnerId || '',
-          winnerTicket: sData.wheel_state.winnerTicket ? Number(sData.wheel_state.winnerTicket) : undefined,
-          prizeTitle: sData.wheel_state.prizeTitle || '',
-          spunAt: sData.wheel_state.spunAt || '',
-        };
-      }
-      saveDb();
-    } else {
-      // Upsert current settings to Supabase
-      await supabase.from('giveaway_settings').upsert({
-        id: 'default',
-        store_name: db.settings.storeName,
-        store_tagline: db.settings.storeTagline,
-        giveaway_title: db.settings.giveawayTitle,
-        giveaway_description: db.settings.giveawayDescription,
-        theme_id: db.settings.themeId,
-        is_registration_open: db.settings.isRegistrationOpen,
-        allow_duplicates: db.settings.allowDuplicates,
-        mask_phone_numbers: db.settings.maskPhoneNumbers,
-        admin_pin: db.settings.adminPin || 'Alrneem9@1',
-        current_prize: db.settings.currentPrize,
-        wheel_state: db.settings.wheelState,
-        updated_at: new Date().toISOString(),
-      });
-    }
-
-    console.log(`[Supabase] Cloud database synced: ${db.participants.length} participants, ${db.settings.prizes?.length || 0} prizes.`);
+    console.log(`[Supabase] Cloud database synced: ${db.participants.length} participants, ${db.settings.prizes?.length || 0} prizes, store: ${db.settings.storeName}`);
   } catch (err) {
     console.error('[Supabase] Sync error, operating with local fallback cache:', err);
   }
 }
 
-async function syncParticipantToSupabase(p: Participant) {
+async function saveParticipantToCloud(p: Participant): Promise<boolean> {
   try {
-    await supabase.from('participants').upsert({
+    const { error } = await supabase.from('participants').upsert({
       id: p.id,
       ticket_number: p.ticketNumber,
       ticketNumber: p.ticketNumber,
@@ -345,23 +357,29 @@ async function syncParticipantToSupabase(p: Participant) {
       prize_won: p.prizeWon || null,
       prizeWon: p.prizeWon || null,
     });
+    if (error) throw error;
+    return true;
   } catch (err) {
-    console.error('[Supabase] Failed to sync participant:', err);
+    console.error('[Supabase] Failed to save participant to cloud:', err);
+    return false;
   }
 }
 
-async function deleteParticipantFromSupabase(id: string) {
+async function deleteParticipantFromCloud(id: string): Promise<boolean> {
   try {
-    await supabase.from('participants').delete().eq('id', id);
+    const { error } = await supabase.from('participants').delete().eq('id', id);
+    if (error) throw error;
+    return true;
   } catch (err) {
     console.error('[Supabase] Failed to delete participant from cloud:', err);
+    return false;
   }
 }
 
-async function clearParticipantsInSupabase(type: string) {
+async function clearParticipantsFromCloud(type: string): Promise<boolean> {
   try {
     if (type === 'winners') {
-      await supabase.from('participants').update({
+      const { error } = await supabase.from('participants').update({
         has_won: false,
         hasWon: false,
         won_at: null,
@@ -369,72 +387,92 @@ async function clearParticipantsInSupabase(type: string) {
         prize_won: null,
         prizeWon: null,
       }).neq('id', '___');
+      if (error) throw error;
     } else if (type === 'non-winners') {
-      await supabase.from('participants').delete().eq('has_won', false);
+      const { error } = await supabase.from('participants').delete().eq('has_won', false);
+      if (error) throw error;
     } else {
-      await supabase.from('participants').delete().neq('id', '___');
+      const { error } = await supabase.from('participants').delete().neq('id', '___');
+      if (error) throw error;
     }
+    return true;
   } catch (err) {
     console.error('[Supabase] Failed to clear participants in cloud:', err);
+    return false;
   }
 }
 
-async function syncPrizeToSupabase(prize: Prize) {
+async function savePrizeToCloud(prize: Prize): Promise<boolean> {
   try {
-    await supabase.from('prizes').upsert({
+    const { error } = await supabase.from('prizes').upsert({
       id: prize.id,
       title: prize.title,
       quantity: prize.quantity,
       icon: prize.icon || 'Trophy',
       color: prize.color || '#F59E0B',
     });
+    if (error) throw error;
+    return true;
   } catch (err) {
-    console.error('[Supabase] Failed to sync prize to cloud:', err);
+    console.error('[Supabase] Failed to save prize to cloud:', err);
+    return false;
   }
 }
 
-async function deletePrizeFromSupabase(id: string) {
+async function deletePrizeFromCloud(id: string): Promise<boolean> {
   try {
-    await supabase.from('prizes').delete().eq('id', id);
+    const { error } = await supabase.from('prizes').delete().eq('id', id);
+    if (error) throw error;
+    return true;
   } catch (err) {
     console.error('[Supabase] Failed to delete prize from cloud:', err);
+    return false;
   }
 }
 
-async function syncSettingsToSupabase() {
+async function saveSettingsToCloud(settingsUpdates?: Partial<StoreSettings>): Promise<boolean> {
   try {
-    await supabase.from('giveaway_settings').upsert({
+    const updated = {
+      ...db.settings,
+      ...(settingsUpdates || {}),
+    };
+    const { error } = await supabase.from('giveaway_settings').upsert({
       id: 'default',
-      store_name: db.settings.storeName,
-      store_tagline: db.settings.storeTagline,
-      giveaway_title: db.settings.giveawayTitle,
-      giveaway_description: db.settings.giveawayDescription,
-      logo_url: db.settings.logoUrl,
-      theme_id: db.settings.themeId,
-      is_registration_open: db.settings.isRegistrationOpen,
-      allow_duplicates: db.settings.allowDuplicates,
-      mask_phone_numbers: db.settings.maskPhoneNumbers,
-      admin_pin: db.settings.adminPin,
-      current_prize: db.settings.currentPrize,
-      wheel_state: db.settings.wheelState,
-      custom_colors: db.settings.customColors || {},
-      raw_settings: db.settings,
+      store_name: updated.storeName || 'متجر الرعد',
+      store_tagline: updated.storeTagline,
+      giveaway_title: updated.giveawayTitle,
+      giveaway_description: updated.giveawayDescription,
+      logo_url: updated.logoUrl,
+      theme_id: updated.themeId,
+      is_registration_open: updated.isRegistrationOpen,
+      allow_duplicates: updated.allowDuplicates,
+      mask_phone_numbers: updated.maskPhoneNumbers,
+      admin_pin: updated.adminPin || 'Alrneem9@1',
+      current_prize: updated.currentPrize,
+      wheel_state: updated.wheelState,
+      custom_colors: updated.customColors || {},
+      raw_settings: updated,
       updated_at: new Date().toISOString(),
     });
+    if (error) throw error;
+    return true;
   } catch (err) {
-    console.error('[Supabase] Failed to sync settings to cloud:', err);
+    console.error('[Supabase] Failed to save settings to cloud:', err);
+    return false;
   }
 }
 
-async function syncWheelStateToSupabase() {
+async function saveWheelStateToCloud(wheelState: WheelState): Promise<boolean> {
   try {
-    await supabase.from('giveaway_settings').upsert({
-      id: 'default',
-      wheel_state: db.settings.wheelState,
+    const { error } = await supabase.from('giveaway_settings').update({
+      wheel_state: wheelState,
       updated_at: new Date().toISOString(),
-    });
+    }).eq('id', 'default');
+    if (error) throw error;
+    return true;
   } catch (err) {
-    console.error('[Supabase] Failed to sync wheel_state to cloud:', err);
+    console.error('[Supabase] Failed to update wheel_state in cloud:', err);
+    return false;
   }
 }
 
@@ -502,26 +540,77 @@ async function startServer() {
   });
 
   // Public Giveaway & Spectator State (Strict privacy: NO phone numbers or participant personal info)
-  app.get('/api/public/giveaway', (_req, res) => {
-    const eligibleParticipants = db.participants.filter(p => !p.hasWon);
-    const namesToSpin = eligibleParticipants.length > 0
-      ? eligibleParticipants.map(p => p.name)
-      : db.participants.map(p => p.name);
+  app.get('/api/public/giveaway', async (_req, res) => {
+    try {
+      const eligibleParticipants = db.participants.filter(p => !p.hasWon);
+      const namesToSpin = eligibleParticipants.length > 0
+        ? eligibleParticipants.map(p => p.name)
+        : db.participants.map(p => p.name);
 
-    res.json({
-      success: true,
-      currentPrize: db.settings.currentPrize || DEFAULT_STATE.settings.currentPrize,
-      wheelState: db.settings.wheelState || DEFAULT_STATE.settings.wheelState,
-      totalParticipants: db.participants.length,
-      participantNames: namesToSpin, // Only names for wheel spinning, NO phones
-      isRegistrationOpen: db.settings.isRegistrationOpen,
-      storeName: db.settings.storeName,
-      storeTagline: db.settings.storeTagline,
-      themeId: db.settings.themeId,
-    });
+      res.json({
+        success: true,
+        currentPrize: db.settings.currentPrize || DEFAULT_STATE.settings.currentPrize,
+        wheelState: db.settings.wheelState || DEFAULT_STATE.settings.wheelState,
+        totalParticipants: db.participants.length,
+        participantNames: namesToSpin, // Only names for wheel spinning, NO phones
+        isRegistrationOpen: db.settings.isRegistrationOpen,
+        storeName: db.settings.storeName,
+        storeTagline: db.settings.storeTagline,
+        themeId: db.settings.themeId,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
   });
 
-  // Register New Participant (Strictly checks Full Name & Tribe + exactly 8-digit Phone)
+  // Participant Cloud Lookup (Direct lookup from Supabase by phone or ticket)
+  app.get('/api/participants/lookup', async (req, res) => {
+    try {
+      const query = (req.query.q || req.query.phone || '').toString().trim();
+      if (!query) {
+        return res.status(400).json({ success: false, error: 'يرجى إدخال رقم الهاتف أو رقم التذكرة للبحث' });
+      }
+
+      const digits = query.replace(/\D/g, '');
+      let queryBuilder = supabase.from('participants').select('*');
+
+      if (digits.length === 8) {
+        queryBuilder = queryBuilder.eq('phone', digits);
+      } else {
+        const tNum = parseInt(query, 10);
+        if (!isNaN(tNum)) {
+          queryBuilder = queryBuilder.eq('ticket_number', tNum);
+        } else {
+          queryBuilder = queryBuilder.eq('id', query);
+        }
+      }
+
+      const { data, error } = await queryBuilder.order('registered_at', { ascending: false }).limit(1);
+
+      if (error || !data || data.length === 0) {
+        return res.status(404).json({ success: false, error: 'لم يتم العثور على تذكرة مسجلة بهذا الرقم في السحب السحابي' });
+      }
+
+      const p = mapParticipantRow(data[0]);
+      res.json({
+        success: true,
+        participant: {
+          id: p.id,
+          ticketNumber: p.ticketNumber,
+          name: p.name,
+          phone: p.phone,
+          registeredAt: p.registeredAt,
+          hasWon: p.hasWon,
+          prizeWon: p.prizeWon,
+          wonAt: p.wonAt,
+        },
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Register New Participant (Direct Supabase Cloud Registration with 8-digit Phone)
   app.post('/api/participants', async (req, res) => {
     try {
       const { name, phone } = req.body;
@@ -550,34 +639,52 @@ async function startServer() {
 
       const cleanPhone = phoneCheck.normalized;
 
-      // Check duplicates
+      // Check duplicates in Supabase database directly
       if (!db.settings.allowDuplicates) {
-        const exists = db.participants.some(
-          (p) => p.phone === cleanPhone
-        );
-        if (exists) {
+        const { data: existing } = await supabase
+          .from('participants')
+          .select('id, name, phone, ticket_number')
+          .eq('phone', cleanPhone)
+          .limit(1);
+
+        if (existing && existing.length > 0) {
           return res.status(409).json({
             success: false,
             error: 'هذا الرقم مسجل بالفعل في السحب! نتمنى لك حظاً موفقاً في عجلة الحظ.',
+            existingTicket: existing[0].ticket_number,
           });
         }
       }
 
-      const ticketNumber = db.nextTicketNumber++;
+      // Query latest max ticket number from Supabase
+      const { data: lastTicketRow } = await supabase
+        .from('participants')
+        .select('ticket_number')
+        .order('ticket_number', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      const nextTicket = Math.max(
+        (lastTicketRow?.ticket_number ? Number(lastTicketRow.ticket_number) : 1000) + 1,
+        db.nextTicketNumber++
+      );
+
       const newParticipant: Participant = {
         id: `p-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-        ticketNumber,
+        ticketNumber: nextTicket,
         name: name.trim(),
         phone: cleanPhone,
         registeredAt: new Date().toISOString(),
         hasWon: false,
       };
 
-      db.participants.push(newParticipant);
-      saveDb();
+      // Persist directly to Supabase Cloud Database
+      await saveParticipantToCloud(newParticipant);
 
-      // Cloud sync to Supabase
-      syncParticipantToSupabase(newParticipant);
+      // Update in-memory cache
+      db.participants.push(newParticipant);
+      db.nextTicketNumber = nextTicket + 1;
+      saveDb();
 
       res.json({
         success: true,
@@ -620,18 +727,28 @@ async function startServer() {
 
   // --- ADMIN PROTECTED ROUTES ---
 
-  // Admin: Get Full Participants List (Table with Name & Tribe, 8-digit Phone, Timestamp)
-  app.get('/api/admin/participants', checkAdminAuth, (_req, res) => {
-    res.json({
-      success: true,
-      participants: db.participants,
-      totalCount: db.participants.length,
-      winnersCount: db.participants.filter(p => p.hasWon).length,
-    });
+  // Admin: Get Full Participants List (Directly from Supabase Cloud)
+  app.get('/api/admin/participants', checkAdminAuth, async (_req, res) => {
+    try {
+      const list = await fetchCloudParticipants();
+      res.json({
+        success: true,
+        participants: list,
+        totalCount: list.length,
+        winnersCount: list.filter(p => p.hasWon).length,
+      });
+    } catch (err: any) {
+      res.json({
+        success: true,
+        participants: db.participants,
+        totalCount: db.participants.length,
+        winnersCount: db.participants.filter(p => p.hasWon).length,
+      });
+    }
   });
 
-  // Admin: Update Current Prize Title & Details
-  app.post('/api/admin/prize', checkAdminAuth, (req, res) => {
+  // Admin: Update Current Prize Title & Details (Saves to Supabase giveaway_settings & prizes)
+  app.post('/api/admin/prize', checkAdminAuth, async (req, res) => {
     try {
       const { title, details } = req.body;
 
@@ -641,10 +758,12 @@ async function startServer() {
       };
       saveDb();
 
-      // Sync settings and prize to Supabase
-      syncSettingsToSupabase();
+      // Persist to Supabase giveaway_settings
+      await saveSettingsToCloud({ currentPrize: db.settings.currentPrize });
+
+      // If a title exists, upsert into Supabase prizes table
       if (db.settings.currentPrize.title) {
-        syncPrizeToSupabase({
+        await savePrizeToCloud({
           id: 'current-featured-prize',
           title: db.settings.currentPrize.title,
           quantity: 1,
@@ -666,20 +785,8 @@ async function startServer() {
   // Admin: Manage Prizes in Supabase (table 'prizes')
   app.get('/api/admin/prizes', checkAdminAuth, async (_req, res) => {
     try {
-      const { data, error } = await supabase.from('prizes').select('*').order('created_at', { ascending: true });
-      if (!error && data && data.length > 0) {
-        const mapped = data.map((row: any) => ({
-          id: row.id,
-          title: row.title || '',
-          quantity: Number(row.quantity || 1),
-          icon: row.icon || 'Trophy',
-          color: row.color || '#F59E0B',
-        }));
-        db.settings.prizes = mapped;
-        saveDb();
-        return res.json({ success: true, prizes: mapped });
-      }
-      res.json({ success: true, prizes: db.settings.prizes || [] });
+      const prizes = await fetchCloudPrizes();
+      res.json({ success: true, prizes });
     } catch {
       res.json({ success: true, prizes: db.settings.prizes || [] });
     }
@@ -706,8 +813,8 @@ async function startServer() {
       }
       saveDb();
 
-      // Cloud sync
-      await syncPrizeToSupabase(newPrize);
+      // Direct Cloud save to Supabase
+      await savePrizeToCloud(newPrize);
 
       res.json({ success: true, prize: newPrize });
     } catch {
@@ -721,8 +828,8 @@ async function startServer() {
       db.settings.prizes = (db.settings.prizes || []).filter(p => p.id !== id);
       saveDb();
 
-      // Cloud delete
-      await deletePrizeFromSupabase(id);
+      // Direct Cloud delete from Supabase
+      await deletePrizeFromCloud(id);
 
       res.json({ success: true, message: 'تم حذف الجائزة من قاعدة البيانات السحابية' });
     } catch {
@@ -730,8 +837,8 @@ async function startServer() {
     }
   });
 
-  // Admin: Toggle or Set Registration Status (Close registration and cap at current count)
-  app.post('/api/admin/toggle-registration', checkAdminAuth, (req, res) => {
+  // Admin: Toggle or Set Registration Status (Direct update to Supabase giveaway_settings)
+  app.post('/api/admin/toggle-registration', checkAdminAuth, async (req, res) => {
     try {
       const { isOpen } = req.body;
       if (typeof isOpen === 'boolean') {
@@ -740,7 +847,9 @@ async function startServer() {
         db.settings.isRegistrationOpen = !db.settings.isRegistrationOpen;
       }
       saveDb();
-      syncSettingsToSupabase();
+
+      // Persist to Supabase
+      await saveSettingsToCloud({ isRegistrationOpen: db.settings.isRegistrationOpen });
 
       res.json({
         success: true,
@@ -755,20 +864,23 @@ async function startServer() {
     }
   });
 
-  // Admin: Trigger Wheel Spin & Pick Random Winner
-  app.post('/api/admin/spin', checkAdminAuth, (req, res) => {
+  // Admin: Trigger Wheel Spin & Pick Random Winner (Saved to Supabase participants & wheel_state)
+  app.post('/api/admin/spin', checkAdminAuth, async (req, res) => {
     try {
       const { prizeTitle } = req.body;
       const currentPrizeName = prizeTitle || db.settings.currentPrize?.title || 'الجائزة الكبرى';
 
+      // Always read latest participants from Supabase
+      const allParticipants = await fetchCloudParticipants();
+
       // Pick from eligible participants (haven't won yet)
-      let eligible = db.participants.filter(p => !p.hasWon);
+      let eligible = allParticipants.filter(p => !p.hasWon);
       if (eligible.length === 0) {
-        if (db.participants.length === 0) {
+        if (allParticipants.length === 0) {
           return res.status(400).json({ success: false, error: 'لا يوجد مشاركون مسجلون في السحب حتى الآن' });
         }
         // If all have won, pick from all participants
-        eligible = db.participants;
+        eligible = allParticipants;
       }
 
       const randomIndex = Math.floor(Math.random() * eligible.length);
@@ -779,7 +891,7 @@ async function startServer() {
       winner.prizeWon = currentPrizeName;
 
       // Update wheel state broadcasted to all spectators
-      db.settings.wheelState = {
+      const wheelState: WheelState = {
         isSpinning: true,
         winnerName: winner.name,
         winnerId: winner.id,
@@ -787,44 +899,50 @@ async function startServer() {
         prizeTitle: currentPrizeName,
         spunAt: new Date().toISOString(),
       };
-
+      db.settings.wheelState = wheelState;
       saveDb();
 
-      // Cloud sync winner and wheel state to Supabase
-      syncParticipantToSupabase(winner);
-      syncWheelStateToSupabase();
+      // Persist winner in Supabase table 'participants'
+      await saveParticipantToCloud(winner);
+
+      // Persist wheel_state in Supabase table 'giveaway_settings'
+      await saveWheelStateToCloud(wheelState);
 
       res.json({
         success: true,
         winner,
         wheelState: db.settings.wheelState,
-        remainingEligible: db.participants.filter(p => !p.hasWon).length,
+        remainingEligible: allParticipants.filter(p => !p.hasWon && p.id !== winner.id).length,
       });
-    } catch {
-      res.status(500).json({ success: false, error: 'فشل في إجراء السحب' });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: 'فشل في إجراء السحب: ' + err.message });
     }
   });
 
-  // Admin: Reset Wheel State (Clears winner announcement and prepares for next spin)
-  app.post('/api/admin/reset-wheel', checkAdminAuth, (_req, res) => {
-    db.settings.wheelState = {
+  // Admin: Reset Wheel State (Clears winner announcement in Supabase)
+  app.post('/api/admin/reset-wheel', checkAdminAuth, async (_req, res) => {
+    const wheelState: WheelState = {
       isSpinning: false,
       winnerName: '',
+      winnerId: '',
       prizeTitle: '',
       spunAt: '',
     };
+    db.settings.wheelState = wheelState;
     saveDb();
-    syncWheelStateToSupabase();
+
+    // Persist to Supabase
+    await saveWheelStateToCloud(wheelState);
 
     res.json({
       success: true,
       wheelState: db.settings.wheelState,
-      message: 'تم إعادة تعيين حالة العجلة ومزامنتها بنجاح',
+      message: 'تم إعادة تعيين حالة العجلة ومزامنتها بنجاح مع Supabase',
     });
   });
 
-  // Admin: Add Participant Manually
-  app.post('/api/admin/participants/add', checkAdminAuth, (req, res) => {
+  // Admin: Add Participant Manually (Direct Insert into Supabase)
+  app.post('/api/admin/participants/add', checkAdminAuth, async (req, res) => {
     try {
       const { name, phone } = req.body;
       if (!name || typeof name !== 'string' || name.trim().length < 2) {
@@ -836,7 +954,18 @@ async function startServer() {
         return res.status(400).json({ success: false, error: phoneCheck.error || 'رقم الهاتف يجب أن يتكون من 8 أرقام فقط' });
       }
 
-      const ticketNumber = db.nextTicketNumber++;
+      const { data: lastTicketRow } = await supabase
+        .from('participants')
+        .select('ticket_number')
+        .order('ticket_number', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      const ticketNumber = Math.max(
+        (lastTicketRow?.ticket_number ? Number(lastTicketRow.ticket_number) : 1000) + 1,
+        db.nextTicketNumber++
+      );
+
       const newParticipant: Participant = {
         id: `p-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
         ticketNumber,
@@ -846,11 +975,12 @@ async function startServer() {
         hasWon: false,
       };
 
-      db.participants.push(newParticipant);
-      saveDb();
+      // Persist to Supabase
+      await saveParticipantToCloud(newParticipant);
 
-      // Cloud sync to Supabase
-      syncParticipantToSupabase(newParticipant);
+      db.participants.push(newParticipant);
+      db.nextTicketNumber = ticketNumber + 1;
+      saveDb();
 
       res.json({
         success: true,
@@ -862,42 +992,49 @@ async function startServer() {
     }
   });
 
-  // Admin: Clear Participants
-  app.post('/api/admin/participants/clear', checkAdminAuth, (req, res) => {
-    const { type } = req.body; // 'all' or 'non-winners' or 'winners'
-    if (type === 'winners') {
-      db.participants.forEach((p) => {
-        p.hasWon = false;
-        delete p.wonAt;
-        delete p.prizeWon;
+  // Admin: Clear Participants (Direct Operation on Supabase)
+  app.post('/api/admin/participants/clear', checkAdminAuth, async (req, res) => {
+    try {
+      const { type } = req.body; // 'all' or 'non-winners' or 'winners'
+      if (type === 'winners') {
+        db.participants.forEach((p) => {
+          p.hasWon = false;
+          delete p.wonAt;
+          delete p.prizeWon;
+        });
+      } else if (type === 'non-winners') {
+        db.participants = db.participants.filter((p) => p.hasWon);
+      } else {
+        db.participants = [];
+      }
+
+      // Also reset wheel
+      const wheelState: WheelState = {
+        isSpinning: false,
+        winnerName: '',
+        winnerId: '',
+        prizeTitle: '',
+        spunAt: '',
+      };
+      db.settings.wheelState = wheelState;
+      saveDb();
+
+      // Cloud operations on Supabase
+      await clearParticipantsFromCloud(type);
+      await saveWheelStateToCloud(wheelState);
+
+      res.json({
+        success: true,
+        participants: db.participants,
+        totalParticipants: db.participants.length,
       });
-    } else if (type === 'non-winners') {
-      db.participants = db.participants.filter((p) => p.hasWon);
-    } else {
-      db.participants = [];
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: 'فشل مسح المشاركين: ' + err.message });
     }
-    // Also reset wheel
-    db.settings.wheelState = {
-      isSpinning: false,
-      winnerName: '',
-      prizeTitle: '',
-      spunAt: '',
-    };
-    saveDb();
-
-    // Cloud sync to Supabase
-    clearParticipantsInSupabase(type);
-    syncWheelStateToSupabase();
-
-    res.json({
-      success: true,
-      participants: db.participants,
-      totalParticipants: db.participants.length,
-    });
   });
 
-  // Admin: Seed Realistic 8-digit Participants
-  app.post('/api/admin/participants/seed', checkAdminAuth, (_req, res) => {
+  // Admin: Seed Realistic 8-digit Participants (Batch Insert to Supabase)
+  app.post('/api/admin/participants/seed', checkAdminAuth, async (_req, res) => {
     try {
       const sampleParticipants = [
         { name: 'سالم بن ناصر الحارثي', phone: '91234567' },
@@ -912,21 +1049,47 @@ async function startServer() {
         { name: 'عبدالعزيز بن راشد العامري', phone: '74455667' },
       ];
 
-      sampleParticipants.forEach((sample) => {
-        const ticketNumber = db.nextTicketNumber++;
+      const { data: lastTicketRow } = await supabase
+        .from('participants')
+        .select('ticket_number')
+        .order('ticket_number', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      let currentTicket = (lastTicketRow?.ticket_number ? Number(lastTicketRow.ticket_number) : 1000);
+
+      const addedList: Participant[] = [];
+      for (const sample of sampleParticipants) {
+        currentTicket++;
         const newPart: Participant = {
           id: `p-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-          ticketNumber,
+          ticketNumber: currentTicket,
           name: sample.name,
           phone: sample.phone,
           registeredAt: new Date().toISOString(),
           hasWon: false,
         };
+        addedList.push(newPart);
         db.participants.push(newPart);
-        syncParticipantToSupabase(newPart);
-      });
+      }
 
+      db.nextTicketNumber = currentTicket + 1;
       saveDb();
+
+      // Upsert batch to Supabase
+      const rows = addedList.map(p => ({
+        id: p.id,
+        ticket_number: p.ticketNumber,
+        ticketNumber: p.ticketNumber,
+        name: p.name,
+        phone: p.phone,
+        registered_at: p.registeredAt,
+        registeredAt: p.registeredAt,
+        has_won: false,
+        hasWon: false,
+      }));
+      await supabase.from('participants').upsert(rows);
+
       res.json({
         success: true,
         participants: db.participants,
@@ -937,51 +1100,78 @@ async function startServer() {
     }
   });
 
-  // Admin: Delete Single Participant
-  app.delete('/api/admin/participants/:id', checkAdminAuth, (req, res) => {
-    const { id } = req.params;
-    db.participants = db.participants.filter((p) => p.id !== id);
-    saveDb();
-    deleteParticipantFromSupabase(id);
-    res.json({ success: true, remaining: db.participants.length });
+  // Admin: Delete Single Participant (Direct from Supabase)
+  app.delete('/api/admin/participants/:id', checkAdminAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      db.participants = db.participants.filter((p) => p.id !== id);
+      saveDb();
+
+      // Delete from Supabase
+      await deleteParticipantFromCloud(id);
+
+      res.json({ success: true, remaining: db.participants.length });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
   });
 
-  // Admin: Reset Winners flag
-  app.post('/api/admin/reset-winners', checkAdminAuth, (_req, res) => {
-    db.participants.forEach((p) => {
-      p.hasWon = false;
-      delete p.wonAt;
-      delete p.prizeWon;
-    });
-    db.settings.wheelState = {
-      isSpinning: false,
-      winnerName: '',
-      prizeTitle: '',
-      spunAt: '',
-    };
-    saveDb();
-    clearParticipantsInSupabase('winners');
-    syncWheelStateToSupabase();
+  // Admin: Reset Winners flag (Direct update in Supabase)
+  app.post('/api/admin/reset-winners', checkAdminAuth, async (_req, res) => {
+    try {
+      db.participants.forEach((p) => {
+        p.hasWon = false;
+        delete p.wonAt;
+        delete p.prizeWon;
+      });
+      const wheelState: WheelState = {
+        isSpinning: false,
+        winnerName: '',
+        winnerId: '',
+        prizeTitle: '',
+        spunAt: '',
+      };
+      db.settings.wheelState = wheelState;
+      saveDb();
 
-    res.json({ success: true, participants: db.participants });
+      // Update in Supabase
+      await clearParticipantsFromCloud('winners');
+      await saveWheelStateToCloud(wheelState);
+
+      res.json({ success: true, participants: db.participants });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
   });
 
   // --- SETTINGS APIS (Admin or Read-Only) ---
 
-  // Get Settings
-  app.get('/api/settings', (_req, res) => {
-    res.json({
-      success: true,
-      settings: db.settings,
-      stats: {
-        totalParticipants: db.participants.length,
-        totalWinners: db.participants.filter((p) => p.hasWon).length,
-      },
-    });
+  // Get Settings (Refreshed directly from Supabase)
+  app.get('/api/settings', async (_req, res) => {
+    try {
+      await Promise.all([fetchCloudSettings(), fetchCloudParticipants()]);
+      res.json({
+        success: true,
+        settings: db.settings,
+        stats: {
+          totalParticipants: db.participants.length,
+          totalWinners: db.participants.filter((p) => p.hasWon).length,
+        },
+      });
+    } catch {
+      res.json({
+        success: true,
+        settings: db.settings,
+        stats: {
+          totalParticipants: db.participants.length,
+          totalWinners: db.participants.filter((p) => p.hasWon).length,
+        },
+      });
+    }
   });
 
-  // Update Settings
-  app.post('/api/settings', checkAdminAuth, (req, res) => {
+  // Update Settings (Directly saved to Supabase giveaway_settings)
+  app.post('/api/settings', checkAdminAuth, async (req, res) => {
     try {
       const updated = req.body;
       db.settings = {
@@ -990,7 +1180,9 @@ async function startServer() {
         adminPassword: ADMIN_PASSWORD,
       };
       saveDb();
-      syncSettingsToSupabase();
+
+      // Direct save to Supabase
+      await saveSettingsToCloud(updated);
 
       res.json({ success: true, settings: db.settings });
     } catch {
@@ -999,17 +1191,19 @@ async function startServer() {
   });
 
   // Participants endpoint (Privacy protected: if not admin, mask phone numbers)
-  app.get('/api/participants', (req, res) => {
+  app.get('/api/participants', async (req, res) => {
     const authHeader = req.headers['x-admin-password'] || req.headers['authorization'];
     const pass = (authHeader || '').toString().replace(/^Bearer\s+/i, '').trim();
     const isAdmin = pass === ADMIN_PASSWORD;
 
+    const currentList = await fetchCloudParticipants();
+
     if (isAdmin) {
-      return res.json({ success: true, participants: db.participants });
+      return res.json({ success: true, participants: currentList });
     }
 
     // Public / Spectator request: Mask phone numbers completely or only return minimal data for privacy
-    const masked = db.participants.map((p) => ({
+    const masked = currentList.map((p) => ({
       id: p.id,
       ticketNumber: p.ticketNumber,
       name: p.name,
@@ -1021,7 +1215,7 @@ async function startServer() {
   });
 
   // Record winner (legacy support)
-  app.post('/api/draw/winner', checkAdminAuth, (req, res) => {
+  app.post('/api/draw/winner', checkAdminAuth, async (req, res) => {
     try {
       const { participantId, prizeWon } = req.body;
       const participant = db.participants.find((p) => p.id === participantId);
@@ -1034,7 +1228,7 @@ async function startServer() {
       participant.wonAt = new Date().toISOString();
       participant.prizeWon = prizeWon || db.settings.currentPrize?.title || 'جائزة السحب';
 
-      db.settings.wheelState = {
+      const wheelState: WheelState = {
         isSpinning: true,
         winnerName: participant.name,
         winnerId: participant.id,
@@ -1042,10 +1236,11 @@ async function startServer() {
         prizeTitle: participant.prizeWon,
         spunAt: new Date().toISOString(),
       };
+      db.settings.wheelState = wheelState;
 
       saveDb();
-      syncParticipantToSupabase(participant);
-      syncWheelStateToSupabase();
+      await saveParticipantToCloud(participant);
+      await saveWheelStateToCloud(wheelState);
 
       res.json({
         success: true,
@@ -1058,21 +1253,24 @@ async function startServer() {
   });
 
   // Reset winners (legacy support)
-  app.post('/api/draw/reset-winners', checkAdminAuth, (_req, res) => {
+  app.post('/api/draw/reset-winners', checkAdminAuth, async (_req, res) => {
     db.participants.forEach((p) => {
       p.hasWon = false;
       delete p.wonAt;
       delete p.prizeWon;
     });
-    db.settings.wheelState = {
+    const wheelState: WheelState = {
       isSpinning: false,
       winnerName: '',
+      winnerId: '',
       prizeTitle: '',
       spunAt: '',
     };
+    db.settings.wheelState = wheelState;
     saveDb();
-    clearParticipantsInSupabase('winners');
-    syncWheelStateToSupabase();
+
+    await clearParticipantsFromCloud('winners');
+    await saveWheelStateToCloud(wheelState);
 
     res.json({ success: true, participants: db.participants });
   });
