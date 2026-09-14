@@ -1,0 +1,31 @@
+{
+  "id": "/",
+  "name": "سحب وقيف اوي R3D | R3D Giveaway",
+  "short_name": "R3D سحب",
+  "description": "منصة سحب وقيف اوي متجر R3D الفاخر مع عجلة الحظ والسحب الرقمي السريع",
+  "theme_color": "#06B6D4",
+  "background_color": "#04070A",
+  "display": "standalone",
+  "start_url": "/",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "/pwa-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-maskable-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
