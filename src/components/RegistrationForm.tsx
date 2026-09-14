@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { CurrentPrize, StoreTheme, Participant } from '../types';
 import { Sparkles, Trophy, Phone, User, CheckCircle2, AlertCircle, ArrowLeft, ShieldCheck, Ticket, Lock, Eye } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import { registerParticipantInSupabase } from '../lib/supabase';
 
 interface RegistrationFormProps {
   theme: StoreTheme;
@@ -70,29 +71,22 @@ export default function RegistrationForm({
     setIsLoading(true);
 
     try {
-      const res = await fetch('/api/participants', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: trimmedName,
-          phone: cleanDigits,
-        }),
-      });
+      const result = await registerParticipantInSupabase(trimmedName, cleanDigits, false);
 
-      const data = await res.json();
-
-      if (!res.ok || !data.success) {
-        setError(data.error || 'حدث خطأ أثناء التسجيل. يرجى التأكد من البيانات.');
+      if (!result.success || !result.participant) {
+        setError(result.error || 'حدث خطأ أثناء التسجيل. يرجى التأكد من البيانات.');
         setIsLoading(false);
         return;
       }
 
+      const participant = result.participant;
+
       // Save to LocalStorage so user is remembered
       if (typeof window !== 'undefined') {
-        localStorage.setItem('giveaway_registered_user', JSON.stringify(data.participant));
+        localStorage.setItem('giveaway_registered_user', JSON.stringify(participant));
       }
 
-      setJustRegistered(data.participant);
+      setJustRegistered(participant);
 
       confetti({
         particleCount: 60,
@@ -103,10 +97,10 @@ export default function RegistrationForm({
 
       // Notify parent after small delay
       setTimeout(() => {
-        onRegistered(data.participant);
+        onRegistered(participant);
       }, 2000);
     } catch {
-      setError('تعذر الاتصال بالخادم. يرجى التحقق من اتصال الإنترنت والمحاولة مجدداً.');
+      setError('تعذر إتمام التسجيل في قاعدة البيانات. يرجى التحقق من اتصال الإنترنت والمحاولة مجدداً.');
     } finally {
       setIsLoading(false);
     }

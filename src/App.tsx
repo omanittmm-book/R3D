@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { StoreSettings, Participant, StoreTheme, PublicGiveawayState, CurrentPrize } from './types';
 import { DEFAULT_STORE_SETTINGS, THEME_PRESETS } from './themes';
-import { supabase, lookupParticipantFromCloud } from './lib/supabase';
+import { supabase, lookupParticipantFromCloud, getPublicGiveawayStateFromSupabase, getSettingsFromSupabase } from './lib/supabase';
 import Header from './components/Header';
 import RegistrationForm from './components/RegistrationForm';
 import SpectatorScreen from './components/SpectatorScreen';
@@ -81,96 +81,95 @@ export default function App() {
     }
   };
 
-  // Fetch Public Giveaway Data (Real-time state for spectators)
+  // Fetch Public Giveaway Data (Real-time state for spectators from Supabase directly)
   const fetchPublicState = useCallback(async () => {
     try {
-      const res = await fetch('/api/public/giveaway');
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) {
-          setPublicState((prev) => {
-            const nextPrize = data.currentPrize || DEFAULT_STORE_SETTINGS.currentPrize;
-            const nextWheel = data.wheelState || DEFAULT_STORE_SETTINGS.wheelState;
-            const nextTotal = data.totalParticipants || 0;
-            const nextNames = data.participantNames || [];
-            const nextRegOpen = data.isRegistrationOpen ?? true;
+      const data = await getPublicGiveawayStateFromSupabase();
+      if (data.success) {
+        setPublicState((prev) => {
+          const nextPrize = data.currentPrize || DEFAULT_STORE_SETTINGS.currentPrize;
+          const nextWheel = data.wheelState || DEFAULT_STORE_SETTINGS.wheelState;
+          const nextTotal = data.totalParticipants || 0;
+          const nextNames = data.participantNames || [];
+          const nextRegOpen = data.isRegistrationOpen ?? true;
 
-            const isPrizeEqual =
-              prev.currentPrize.title === nextPrize.title &&
-              prev.currentPrize.details === nextPrize.details;
+          const isPrizeEqual =
+            prev.currentPrize.title === nextPrize.title &&
+            prev.currentPrize.details === nextPrize.details;
 
-            const isWheelEqual =
-              prev.wheelState.isSpinning === nextWheel.isSpinning &&
-              prev.wheelState.winnerName === nextWheel.winnerName &&
-              prev.wheelState.winnerTicket === nextWheel.winnerTicket &&
-              prev.wheelState.prizeTitle === nextWheel.prizeTitle &&
-              prev.wheelState.spunAt === nextWheel.spunAt;
+          const isWheelEqual =
+            prev.wheelState.isSpinning === nextWheel.isSpinning &&
+            prev.wheelState.winnerName === nextWheel.winnerName &&
+            prev.wheelState.winnerTicket === nextWheel.winnerTicket &&
+            prev.wheelState.prizeTitle === nextWheel.prizeTitle &&
+            prev.wheelState.spunAt === nextWheel.spunAt;
 
-            const isNamesEqual =
-              prev.participantNames.length === nextNames.length &&
-              prev.participantNames.every((name, idx) => name === nextNames[idx]);
+          const isNamesEqual =
+            prev.participantNames.length === nextNames.length &&
+            prev.participantNames.every((name, idx) => name === nextNames[idx]);
 
+          if (
+            isPrizeEqual &&
+            isWheelEqual &&
+            isNamesEqual &&
+            prev.totalParticipants === nextTotal &&
+            prev.isRegistrationOpen === nextRegOpen
+          ) {
+            return prev;
+          }
+
+          return {
+            currentPrize: isPrizeEqual ? prev.currentPrize : nextPrize,
+            wheelState: isWheelEqual ? prev.wheelState : nextWheel,
+            totalParticipants: nextTotal,
+            participantNames: nextNames,
+            isRegistrationOpen: nextRegOpen,
+          };
+        });
+
+        if (data.storeName) {
+          setSettings((prev) => {
             if (
-              isPrizeEqual &&
-              isWheelEqual &&
-              isNamesEqual &&
-              prev.totalParticipants === nextTotal &&
-              prev.isRegistrationOpen === nextRegOpen
+              prev.storeName === data.storeName &&
+              prev.storeTagline === (data.storeTagline || prev.storeTagline) &&
+              prev.themeId === (data.themeId || prev.themeId) &&
+              prev.currentPrize.title === (data.currentPrize?.title || prev.currentPrize.title) &&
+              prev.currentPrize.details === (data.currentPrize?.details || prev.currentPrize.details) &&
+              prev.wheelState.isSpinning === (data.wheelState?.isSpinning || false) &&
+              prev.wheelState.winnerName === (data.wheelState?.winnerName || '')
             ) {
               return prev;
             }
-
             return {
-              currentPrize: isPrizeEqual ? prev.currentPrize : nextPrize,
-              wheelState: isWheelEqual ? prev.wheelState : nextWheel,
-              totalParticipants: nextTotal,
-              participantNames: nextNames,
-              isRegistrationOpen: nextRegOpen,
+              ...prev,
+              storeName: data.storeName,
+              storeTagline: data.storeTagline || prev.storeTagline,
+              themeId: data.themeId || prev.themeId,
+              currentPrize: data.currentPrize || prev.currentPrize,
+              wheelState: data.wheelState || prev.wheelState,
             };
           });
-
-          if (data.storeName) {
-            setSettings((prev) => {
-              if (
-                prev.storeName === data.storeName &&
-                prev.storeTagline === (data.storeTagline || prev.storeTagline) &&
-                prev.themeId === (data.themeId || prev.themeId) &&
-                prev.currentPrize.title === (data.currentPrize?.title || prev.currentPrize.title) &&
-                prev.currentPrize.details === (data.currentPrize?.details || prev.currentPrize.details) &&
-                prev.wheelState.isSpinning === (data.wheelState?.isSpinning || false) &&
-                prev.wheelState.winnerName === (data.wheelState?.winnerName || '')
-              ) {
-                return prev;
-              }
-              return {
-                ...prev,
-                storeName: data.storeName,
-                storeTagline: data.storeTagline || prev.storeTagline,
-                themeId: data.themeId || prev.themeId,
-                currentPrize: data.currentPrize || prev.currentPrize,
-                wheelState: data.wheelState || prev.wheelState,
-              };
-            });
-          }
         }
       }
     } catch (err) {
-      console.error('Failed to fetch public giveaway state:', err);
+      console.error('Failed to fetch public giveaway state from Supabase:', err);
     }
   }, []);
 
-  // Fetch full settings once
+  // Fetch full settings once directly from Supabase
   const fetchSettings = useCallback(async () => {
     try {
-      const res = await fetch('/api/settings');
-      if (res.ok) {
-        const data = await res.json();
-        if (data.settings) {
-          setSettings(data.settings);
-        }
+      const data = await getSettingsFromSupabase();
+      if (data && data.settings) {
+        setSettings((prev) => ({
+          ...prev,
+          ...data.settings,
+          currentPrize: data.currentPrize || prev.currentPrize,
+          wheelState: data.wheelState || prev.wheelState,
+        }));
       }
     } catch (err) {
-      console.error('Failed to fetch settings:', err);
+      console.error('Failed to fetch settings from Supabase:', err);
     }
   }, []);
 

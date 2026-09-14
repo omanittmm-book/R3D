@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Lock, KeyRound, ShieldAlert, CheckCircle2, X } from 'lucide-react';
 import { StoreTheme } from '../types';
+import { verifyAdminPin } from '../lib/supabase';
 
 interface AdminAuthModalProps {
   isOpen: boolean;
@@ -32,14 +33,8 @@ export default function AdminAuthModal({
     setError('');
 
     try {
-      const res = await fetch('/api/admin/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pin: pin.trim() }),
-      });
-
-      const data = await res.json();
-      if (res.ok && data.success) {
+      const isValid = await verifyAdminPin(pin.trim());
+      if (isValid) {
         // Save session in localStorage so admin doesn't re-enter on every click
         if (typeof window !== 'undefined') {
           localStorage.setItem('r3d_admin_authenticated', 'true');
@@ -49,7 +44,7 @@ export default function AdminAuthModal({
         setError('');
         onSuccess();
       } else {
-        setError(data.error || 'رمز الدخول غير صحيح! حاول مرة أخرى.');
+        setError('رمز الدخول غير صحيح! حاول مرة أخرى.');
       }
     } catch {
       setError('تعذر التحقق من الرمز، تأكد من الاتصال.');

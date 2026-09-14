@@ -1,6 +1,19 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { CurrentPrize, Participant, StoreTheme, WheelState } from '../types';
 import {
+  getParticipantsFromSupabase,
+  addManualParticipantToSupabase,
+  deleteParticipantFromSupabase,
+  clearParticipantsFromSupabase,
+  seedSampleParticipantsToSupabase,
+  resetWinnersInSupabase,
+  spinWheelInSupabase,
+  resetWheelInSupabase,
+  updateCurrentPrizeInSupabase,
+  toggleRegistrationInSupabase,
+  verifyAdminPin,
+} from '../lib/supabase';
+import {
   Lock,
   Unlock,
   Trophy,
@@ -105,23 +118,14 @@ export default function AdminDashboard({
     }
   }, []);
 
-  // Fetch Full Participants List for Admin
+  // Fetch Full Participants List for Admin directly from Supabase
   const fetchAdminParticipants = useCallback(async () => {
     setIsLoadingParticipants(true);
     try {
-      const res = await fetch('/api/admin/participants', {
-        headers: {
-          'x-admin-password': ADMIN_REQUIRED_PASS,
-        },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.participants) {
-          setParticipants(data.participants);
-        }
-      }
+      const list = await getParticipantsFromSupabase();
+      setParticipants(list);
     } catch (err) {
-      console.error('Error fetching admin participants:', err);
+      console.error('Error fetching admin participants from Supabase:', err);
     } finally {
       setIsLoadingParticipants(false);
     }
@@ -155,30 +159,24 @@ export default function AdminDashboard({
     setPrizeDetails(sDetails);
   }, [currentPrize?.title, currentPrize?.details]);
 
-  // Handle Login
+  // Handle Login directly via Supabase / PIN validation
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError('');
     setIsAuthLoading(true);
 
     try {
-      const res = await fetch('/api/admin/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: passwordInput.trim() }),
-      });
+      const isValid = await verifyAdminPin(passwordInput.trim());
 
-      const data = await res.json();
-
-      if (res.ok && data.success) {
+      if (isValid) {
         setIsAuthenticated(true);
         sessionStorage.setItem('admin_giveaway_pass', ADMIN_REQUIRED_PASS);
         setPasswordInput('');
       } else {
-        setAuthError(data.error || 'كلمة المرور غير صحيحة! تأكد من إدخالها بدقة.');
+        setAuthError('كلمة المرور غير صحيحة! تأكد من إدخالها بدقة.');
       }
     } catch {
-      setAuthError('تعذر التحقق من الخادم. يرجى المحاولة ثانية.');
+      setAuthError('تعذر التحقق من الرمز. يرجى المحاولة ثانية.');
     } finally {
       setIsAuthLoading(false);
     }
@@ -190,82 +188,59 @@ export default function AdminDashboard({
     sessionStorage.removeItem('admin_giveaway_pass');
   };
 
-  // Save Prize to Server
+  // Save Prize directly to Supabase
   const handleSavePrize = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!prizeTitle.trim()) return;
 
     setIsSavingPrize(true);
     try {
-      const res = await fetch('/api/admin/prize', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-admin-password': ADMIN_REQUIRED_PASS,
-        },
-        body: JSON.stringify({
-          title: prizeTitle.trim(),
-          details: prizeDetails.trim(),
-        }),
-      });
+      const result = await updateCurrentPrizeInSupabase(prizeTitle.trim(), prizeDetails.trim());
 
-      if (res.ok) {
-        const data = await res.json();
-        // Clear dirty flag so subsequent server changes can be accepted
-        hasUserEditedPrizeRef.current = false;
-        lastKnownServerPrizeRef.current = {
-          title: data.currentPrize?.title || prizeTitle.trim(),
-          details: data.currentPrize?.details || prizeDetails.trim(),
-        };
-        onPrizeUpdated(data.currentPrize);
-        setPrizeSavedToast(true);
-        setTimeout(() => setPrizeSavedToast(false), 3500);
-      }
+      hasUserEditedPrizeRef.current = false;
+      lastKnownServerPrizeRef.current = {
+        title: result.currentPrize.title,
+        details: result.currentPrize.details,
+      };
+      onPrizeUpdated(result.currentPrize);
+      setPrizeSavedToast(true);
+      setTimeout(() => setPrizeSavedToast(false), 3500);
     } catch {
-      alert('فشل حفظ بيانات الجائزة. يرجى المحاولة مجدداً.');
+      alert('فشل حفظ بيانات الجائزة في Supabase. يرجى المحاولة مجدداً.');
     } finally {
       setIsSavingPrize(false);
     }
   };
 
-  // Toggle Registration Status (Close / Open)
+  // Toggle Registration Status directly in Supabase (Close / Open)
   const handleToggleRegistration = async () => {
     setIsTogglingReg(true);
     try {
       const nextState = !isRegOpen;
-      const res = await fetch('/api/admin/toggle-registration', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-admin-password': ADMIN_REQUIRED_PASS,
-        },
-        body: JSON.stringify({ isOpen: nextState }),
-      });
+      const ok = await toggleRegistrationInSupabase(nextState);
 
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setIsRegOpen(data.isRegistrationOpen);
+      if (ok) {
+        setIsRegOpen(nextState);
         if (onRegistrationStatusChanged) {
-          onRegistrationStatusChanged(data.isRegistrationOpen);
+          onRegistrationStatusChanged(nextState);
         }
         setRegToast(
-          data.message ||
-            (nextState
-              ? 'تم فتح باب التسجيل بنجاح'
-              : 'تم إغلاق باب التسجيل والاكتفاء بالعدد الحالي')
+          nextState
+            ? 'تم فتح باب التسجيل بنجاح'
+            : 'تم إغلاق باب التسجيل والاكتفاء بالعدد الحالي'
         );
         setTimeout(() => setRegToast(''), 4500);
       } else {
-        alert(data.error || 'فشل تغيير حالة التسجيل');
+        alert('فشل تغيير حالة التسجيل في Supabase');
       }
     } catch {
-      alert('حدث خطأ أثناء الاتصال بالخادم لتحديث حالة التسجيل.');
+      alert('حدث خطأ أثناء تحديث حالة التسجيل في قاعدة البيانات.');
     } finally {
       setIsTogglingReg(false);
     }
   };
 
-  // Spin Wheel & Pick Winner (30 seconds duration)
+  // Spin Wheel & Pick Winner directly in Supabase (30 seconds duration)
   const handleSpinWheel = async () => {
     if (isSpinning) return;
     setIsSpinning(true);
@@ -273,21 +248,10 @@ export default function AdminDashboard({
     setAdminSpinCountdown(30);
 
     try {
-      const res = await fetch('/api/admin/spin', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-admin-password': ADMIN_REQUIRED_PASS,
-        },
-        body: JSON.stringify({
-          prizeTitle: prizeTitle.trim() || currentPrize.title,
-        }),
-      });
+      const result = await spinWheelInSupabase(prizeTitle.trim() || currentPrize.title);
 
-      const data = await res.json();
-
-      if (!res.ok || !data.success) {
-        alert(data.error || 'تعذر إجراء السحب. تأكد من وجود مشاركين مسجلين.');
+      if (!result.success || !result.winner) {
+        alert(result.error || 'تعذر إجراء السحب. تأكد من وجود مشاركين مسجلين.');
         setIsSpinning(false);
         setAdminSpinCountdown(null);
         return;
@@ -310,7 +274,7 @@ export default function AdminDashboard({
         clearInterval(countdownInterval);
         setAdminSpinCountdown(null);
         setIsSpinning(false);
-        setSpinWinner(data.winner);
+        setSpinWinner(result.winner!);
         confetti({
           particleCount: 120,
           spread: 85,
@@ -322,24 +286,19 @@ export default function AdminDashboard({
     } catch {
       setIsSpinning(false);
       setAdminSpinCountdown(null);
-      alert('حدث خطأ أثناء الاتصال بالسيرفر لإجراء السحب.');
+      alert('حدث خطأ أثناء الاتصال بقاعدة البيانات لإجراء السحب.');
     }
   };
 
-  // Reset Wheel Draw
+  // Reset Wheel Draw directly in Supabase
   const handleResetWheel = async () => {
     if (!confirm('هل أنت متأكد من إعادة تعيين السحب الحالي؟ سيتم إلغاء شاشة الفائز والاستعداد لسحب جديد.')) {
       return;
     }
 
     try {
-      const res = await fetch('/api/admin/reset-wheel', {
-        method: 'POST',
-        headers: {
-          'x-admin-password': ADMIN_REQUIRED_PASS,
-        },
-      });
-      if (res.ok) {
+      const ok = await resetWheelInSupabase();
+      if (ok) {
         setSpinWinner(null);
         alert('تمت إعادة تعيين السحب بنجاح!');
       }
@@ -348,20 +307,15 @@ export default function AdminDashboard({
     }
   };
 
-  // Reset all winners to eligible
+  // Reset all winners to eligible directly in Supabase
   const handleResetWinners = async () => {
     if (!confirm('هل تريد إعادة تعيين حالة جميع الفائزين ليصبح الجميع مؤهلاً للسحب مرة أخرى؟')) {
       return;
     }
 
     try {
-      const res = await fetch('/api/admin/reset-winners', {
-        method: 'POST',
-        headers: {
-          'x-admin-password': ADMIN_REQUIRED_PASS,
-        },
-      });
-      if (res.ok) {
+      const ok = await resetWinnersInSupabase();
+      if (ok) {
         fetchAdminParticipants();
         alert('تمت إعادة تأهيل جميع المشاركين للسحب!');
       }
@@ -370,22 +324,15 @@ export default function AdminDashboard({
     }
   };
 
-  // Clear all participants
+  // Clear all participants directly in Supabase
   const handleClearParticipants = async () => {
     if (!confirm('⚠️ تحذير: هل أنت متأكد تماماً من تفريغ وحذف جميع المشاركين من السحب؟ هذا الإجراء لا يمكن التراجع عنه.')) {
       return;
     }
 
     try {
-      const res = await fetch('/api/admin/participants/clear', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-admin-password': ADMIN_REQUIRED_PASS,
-        },
-        body: JSON.stringify({ type: 'all' }),
-      });
-      if (res.ok) {
+      const ok = await clearParticipantsFromSupabase('all');
+      if (ok) {
         setParticipants([]);
         setSpinWinner(null);
         alert('تم تفريغ قائمة المشاركين بالكامل.');
@@ -395,20 +342,15 @@ export default function AdminDashboard({
     }
   };
 
-  // Delete single participant
+  // Delete single participant directly in Supabase
   const handleDeleteParticipant = async (id: string, name: string) => {
     if (!confirm(`هل أنت متأكد من حذف المشارك "${name}" من السحب؟`)) {
       return;
     }
 
     try {
-      const res = await fetch(`/api/admin/participants/${id}`, {
-        method: 'DELETE',
-        headers: {
-          'x-admin-password': ADMIN_REQUIRED_PASS,
-        },
-      });
-      if (res.ok) {
+      const ok = await deleteParticipantFromSupabase(id);
+      if (ok) {
         setParticipants((prev) => prev.filter((p) => p.id !== id));
       }
     } catch {
@@ -416,7 +358,7 @@ export default function AdminDashboard({
     }
   };
 
-  // Add Participant Manually
+  // Add Participant Manually directly into Supabase
   const handleAddManualParticipant = async (e: React.FormEvent) => {
     e.preventDefault();
     setManualError('');
@@ -436,21 +378,10 @@ export default function AdminDashboard({
 
     setIsAddingManual(true);
     try {
-      const res = await fetch('/api/admin/participants/add', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-admin-password': ADMIN_REQUIRED_PASS,
-        },
-        body: JSON.stringify({
-          name: trimmedName,
-          phone: cleanDigits,
-        }),
-      });
+      const res = await addManualParticipantToSupabase(trimmedName, cleanDigits);
 
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        setManualError(data.error || 'فشل في إضافة المشارك.');
+      if (!res.success) {
+        setManualError(res.error || 'فشل في إضافة المشارك.');
         return;
       }
 
@@ -459,22 +390,17 @@ export default function AdminDashboard({
       setShowAddModal(false);
       fetchAdminParticipants();
     } catch {
-      setManualError('تعذر الاتصال بالخادم.');
+      setManualError('تعذر الاتصال بقاعدة البيانات.');
     } finally {
       setIsAddingManual(false);
     }
   };
 
-  // Seed Realistic Sample Participants
+  // Seed Realistic Sample Participants directly to Supabase
   const handleSeedSample = async () => {
     try {
-      const res = await fetch('/api/admin/participants/seed', {
-        method: 'POST',
-        headers: {
-          'x-admin-password': ADMIN_REQUIRED_PASS,
-        },
-      });
-      if (res.ok) {
+      const res = await seedSampleParticipantsToSupabase();
+      if (res.success) {
         fetchAdminParticipants();
         alert('تمت إضافة مشاركين تجريبيين بنجاح مع أرقام هواتف من 8 أرقام!');
       }
